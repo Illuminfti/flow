@@ -134,6 +134,17 @@ flow resume audit-42 myflow.py            # completed leaves are skipped, not re
 flow trace audit-42                        # per-leaf model / cost / latency / retries
 ```
 
+## Patterns
+
+Six reusable patterns ship in [`examples/patterns/`](examples/patterns) — classify-and-act,
+fan-out-and-synthesize, adversarial verification, generate-and-filter, tournament (pairwise
+comparative judgment), and loop-until-done — each fighting a specific failure mode (agentic
+laziness, self-preferential bias, goal drift). See **[docs/patterns.md](docs/patterns.md)**.
+
+> Workflows cost **significantly more tokens** — use them for complex, high-value tasks, not
+> ordinary ones. Always set a `--budget`. Patterns & framing distilled from Anthropic's
+> [_A harness for every task_](https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code).
+
 ## For AI agents
 
 Setting this up _as an agent_? Read **[AGENTS.md](AGENTS.md)** — it's written for you.
