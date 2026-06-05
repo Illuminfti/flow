@@ -1,14 +1,9 @@
 """Crash-resumable journal — append-only write-ahead log + materialized results.
 
-The superseded stub kept its journal in memory and flushed once at the end, so
-a crash lost everything. This writes one fsync'd JSONL line per leaf-state
-transition and a materialized result file per completed leaf. Resume replays the
-WAL to reconstruct the leaf state machine; any leaf with a terminal ``completed``
-event and a present result file is skipped. No work lost on crash — the exact
-failure mode ``delegate_task`` has (interrupt → abandon pending children).
-
-The flock+fsync discipline is cloned from ``workstream_orchestrator`` which
-already does crash-safe JSON state correctly.
+Writes one fsync'd JSONL line per leaf-state transition and a materialized
+result file per completed leaf. Resume replays the WAL to reconstruct the leaf
+state machine; any leaf with a terminal event and a present result file is
+skipped, so a crash loses no completed work.
 """
 from __future__ import annotations
 
@@ -106,12 +101,20 @@ class Journal:
 
     @staticmethod
     def _atomic_write(path: Path, payload: Any) -> None:
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        with tmp.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
-            f.flush()
-            os.fsync(f.fileno())
-        tmp.replace(path)
+        # Per-writer temp name: removes the cross-thread replace() race on the
+        # same leaf_id AND prevents an orphaned .tmp on json.dump failure.
+        tmp = path.with_suffix(path.suffix + f".{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+                f.flush()
+                os.fsync(f.fileno())
+            tmp.replace(path)
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     # -- resume ----------------------------------------------------------
     def replay(self) -> Iterator[dict]:

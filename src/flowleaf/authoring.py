@@ -88,11 +88,28 @@ def _extract_code(text: str) -> str:
     return code
 
 
+_BANNED_CALLS = {"__import__", "eval", "exec", "compile", "open", "globals", "locals", "vars"}
+
+
 def validate(script_text: str) -> None:
+    """Guardrail against a misbehaving *model*, NOT a security sandbox against an
+    adversary — authored scripts run with full process privileges. For untrusted
+    input, run with executor_kind="process" + OS-level isolation."""
     try:
         tree = ast.parse(script_text)
     except SyntaxError as exc:
         raise AuthoringError(f"syntax error: {exc}")
+
+    # Only declarative statements at module scope — no top-level side effects.
+    allowed_top = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Import,
+                   ast.ImportFrom, ast.Assign, ast.AnnAssign, ast.Pass)
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+            continue  # module docstring / bare literal
+        if not isinstance(stmt, allowed_top):
+            raise AuthoringError(f"disallowed module-level statement: {type(stmt).__name__} "
+                                 "(only defs, imports, and constant assignments allowed)")
+
     has_run = False
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -101,6 +118,10 @@ def validate(script_text: str) -> None:
             for m in mods:
                 if m and m not in ALLOWED_IMPORTS:
                     raise AuthoringError(f"disallowed import: {m} (stdlib allowlist only)")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _BANNED_CALLS:
+            raise AuthoringError(f"disallowed builtin call: {node.func.id}")
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            raise AuthoringError(f"disallowed dunder access: {node.attr}")
         if isinstance(node, ast.FunctionDef) and node.name == "run":
             has_run = True
     if not has_run:

@@ -1,7 +1,7 @@
 """The engine: two-tier concurrent scheduler with budget gate + crash-durable
 journal.
 
-Tier 1 — leaf pool: the real concurrency throttle (HWF_MAX_WORKERS). Every unit
+Tier 1 — leaf pool: the real concurrency throttle (FLOWLEAF_MAX_WORKERS). Every unit
 of model work runs here. Budget is gated and the journal written around each.
 
 Tier 2 — orchestration pool: large + cheap. Runs the script's thunks / pipeline
@@ -22,20 +22,21 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .budget import Budget, BudgetExceeded
+from . import schema as schema_mod
+from .budget import Budget, BudgetExceeded, DeadlineExceeded
 from .journal import Journal
 from .leaves import LeafRequest, LeafResult, run_leaf
 
 
 def _default_leaf_workers() -> int:
-    env = os.environ.get("HWF_MAX_WORKERS")
+    env = os.environ.get("FLOWLEAF_MAX_WORKERS")
     if env:
         return max(1, int(env))
     return min(32, (os.cpu_count() or 4) * 4)
 
 
 def _default_orch_workers() -> int:
-    env = os.environ.get("HWF_ORCH_WORKERS")
+    env = os.environ.get("FLOWLEAF_ORCH_WORKERS")
     if env:
         return max(2, int(env))
     return 256
@@ -94,6 +95,16 @@ class Engine:
         with self._cache_lock:
             cached = self._cache.get(req.leaf_id)
         if cached is not None:
+            # F1: a cache hit still counts against the deadline — otherwise a
+            # run can serve stale results past its deadline.
+            try:
+                self.budget.check_deadline()
+            except DeadlineExceeded as exc:
+                res = _fail_result(req, f"deadline: {exc}")
+                self._emit({"leaf_id": req.leaf_id, "label": req.label, "phase": req.phase,
+                            "event": "failed", "error": str(exc), "reason": "deadline"})
+                self._record(res)
+                return res
             self._emit({"leaf_id": req.leaf_id, "label": req.label, "phase": req.phase,
                         "event": "cached", "backend": cached.get("backend")})
             res = _result_from_dict(cached)
@@ -103,13 +114,17 @@ class Engine:
         est_in = max(1, len(req.prompt) // 4)
         est_out = req.max_tokens or 400
         est_usd = req.route.est_usd(est_in, est_out)
+        # F5: a schema leaf may make two model calls (initial + one repair) —
+        # gate on the worst case, commit on the truth.
+        mult = 2 if (schema_mod.is_schema(req.schema) and req.route.backend != "local") else 1
 
         try:
-            self.budget.reserve(est_tokens=est_in + est_out, est_usd=est_usd)
-        except BudgetExceeded as exc:
-            res = _fail_result(req, f"budget: {exc}")
+            self.budget.reserve(est_tokens=(est_in + est_out) * mult, est_usd=est_usd * mult)
+        except (BudgetExceeded, DeadlineExceeded) as exc:
+            reason = "deadline" if isinstance(exc, DeadlineExceeded) else "budget"
+            res = _fail_result(req, f"{reason}: {exc}")
             self._emit({"leaf_id": req.leaf_id, "label": req.label, "phase": req.phase,
-                        "event": "failed", "error": str(exc), "reason": "budget"})
+                        "event": "failed", "error": str(exc), "reason": reason})
             self._record(res)
             return res
 
@@ -124,8 +139,13 @@ class Engine:
 
         timeout = self.budget.leaf_deadline(req.timeout)
         try:
-            fut = self._leaf_pool.submit(run_leaf, req)
-            res: LeafResult = fut.result(timeout=timeout)
+            # F3: local leaves are pure Python with unpicklable closures — run
+            # them in-thread (also faster: no IPC) even in process mode.
+            if req.route.backend == "local":
+                res: LeafResult = run_leaf(req)
+            else:
+                fut = self._leaf_pool.submit(run_leaf, req)
+                res = fut.result(timeout=timeout)
         except Exception as exc:
             res = _fail_result(req, f"executor: {exc}")
 

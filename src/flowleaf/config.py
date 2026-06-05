@@ -16,7 +16,8 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-_ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*?))?\}")
+# [^}]* (not .*?) so the default branch can't backtrack catastrophically (ReDoS).
+_ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
 
 class ConfigError(RuntimeError):

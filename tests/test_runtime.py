@@ -1,4 +1,3 @@
-import os
 import time
 
 from flowleaf.runtime import run_workflow
@@ -9,9 +8,8 @@ def _sleep_then(val, secs=0.3):
     return val
 
 
-def _pid_fn():
-    time.sleep(0.5)  # hold the worker so the pool must spread across processes
-    return os.getpid()
+def _answer():
+    return 42
 
 
 def test_parallel_is_actually_concurrent():
@@ -29,14 +27,25 @@ def test_parallel_is_actually_concurrent():
     assert rep["final"]["wall"] < 1.5, rep["final"]["wall"]
 
 
-def test_process_mode_distinct_pids():
+def test_local_works_in_process_mode():
+    # F3: local leaves carry unpicklable closures; in process mode they must run
+    # in-thread, not be shipped to a spawn worker (which used to raise).
     def run(wf, args):
-        wf.phase("pids")
-        return wf.parallel([(lambda i=i: int(wf.local(_pid_fn, label=f"p{i}"))) for i in range(4)])
+        wf.phase("p")
+        return wf.parallel([(lambda i=i: wf.local(lambda: i * 10, label=f"x{i}")) for i in range(3)])
 
     rep = run_workflow(run_fn=run, executor_kind="process", max_workers=4, slug="proc")
-    pids = set(rep["final"])
-    assert len(pids) >= 2 and os.getpid() not in pids
+    assert rep["status"] == "completed"
+    assert sorted(rep["final"]) == [0, 10, 20]
+
+
+def test_local_lambda_no_pickle_error():
+    def run(wf, args):
+        wf.phase("p")
+        return wf.local(_answer, label="a")
+
+    rep = run_workflow(run_fn=run, executor_kind="process", slug="proc2")
+    assert rep["status"] == "completed" and rep["final"] == 42
 
 
 def test_call_budget_halts():

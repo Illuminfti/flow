@@ -30,10 +30,13 @@ class AnthropicBackend:
         except Exception as exc:
             raise BackendError(f"anthropic {self.model}: {exc}") from exc
         text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
-        in_tok = getattr(msg.usage, "input_tokens", None) or estimate_tokens(prompt)
-        out_tok = getattr(msg.usage, "output_tokens", None) or estimate_tokens(text)
+        real_in = getattr(msg.usage, "input_tokens", None)
+        real_out = getattr(msg.usage, "output_tokens", None)
+        in_tok = real_in if real_in is not None else estimate_tokens(prompt)
+        out_tok = real_out if real_out is not None else estimate_tokens(text)
         return BackendResponse(
             text=text, input_tokens=int(in_tok), output_tokens=int(out_tok),
             usd=cost_usd(int(in_tok), int(out_tok), self.pricing),
-            tokens_estimated=False, provider=self.provider, model=self.model,
+            tokens_estimated=real_in is None or real_out is None,
+            provider=self.provider, model=self.model,
         )
