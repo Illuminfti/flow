@@ -114,16 +114,17 @@ class OpenAIHTTPBackend:
     @staticmethod
     def _post(url: str, body: dict, headers: dict, timeout: float) -> dict:
         payload = json.dumps(body).encode("utf-8")
-        try:  # prefer httpx if present
+        try:
             import httpx
-            r = httpx.post(url, content=payload, headers=headers, timeout=timeout)
-            r.raise_for_status()
-            return r.json()
         except ImportError:
-            pass
+            httpx = None
+        if httpx is not None:  # prefer httpx; classify HTTP status (don't lose it)
+            r = httpx.post(url, content=payload, headers=headers, timeout=timeout)
+            if r.status_code >= 400:
+                raise BackendError(f"HTTP {r.status_code}: {r.text[:300]}", status=r.status_code)
+            return r.json()
         import urllib.error
         import urllib.request
-        from .base import BackendError
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:

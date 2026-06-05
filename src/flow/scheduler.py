@@ -22,6 +22,8 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from . import cache as cache_mod
+from . import config as config_mod
 from . import schema as schema_mod
 from .budget import Budget, BudgetExceeded, DeadlineExceeded
 from .journal import Journal
@@ -125,6 +127,26 @@ class Engine:
             self._record(res)
             return res
 
+        # Cross-run content cache (opt-in): reuse identical leaves across runs.
+        cc = (config_mod.get().get("leaf") or {}).get("content_cache") or {}
+        ck = None
+        if cc.get("enabled") and req.route.backend != "local":
+            ck = cache_mod.content_key(req.prompt, getattr(req, "schema_hash", ""),
+                                       req.route.model, req.route.backend)
+            hit = cache_mod.load(ck, cc.get("ttl_days"))
+            if hit is not None:
+                try:
+                    self.budget.check_deadline()
+                except DeadlineExceeded:
+                    self._cancel.set()
+                self._emit({"leaf_id": req.leaf_id, "label": req.label, "phase": req.phase,
+                            "event": "global_cached", "backend": hit.get("backend")})
+                res = _result_from_dict(hit)
+                with self._cache_lock:
+                    self._cache[req.leaf_id] = res.as_dict()
+                self._record(res, cached_hit=True)
+                return res
+
         est_in = max(1, len(req.prompt) // 4)
         est_out = req.max_tokens or 400
         est_usd = req.route.est_usd(est_in, est_out)
@@ -190,6 +212,8 @@ class Engine:
                         "result_ref": result_ref})
         with self._cache_lock:
             self._cache[req.leaf_id] = res.as_dict()
+        if ck and res.status == "completed":
+            cache_mod.store(ck, res.as_dict())
         self._record(res)
         return res
 

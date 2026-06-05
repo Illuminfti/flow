@@ -128,9 +128,11 @@ def validate(script_text: str) -> None:
         raise AuthoringError("script must define run(wf, args)")
 
 
-def dry_run(script_text: str, args=None) -> dict:
+def dry_run(script_text: str, args=None, estimate_cost: bool = False) -> dict:
     """Load + execute with every leaf forced to the local backend (no model
-    calls) to verify the DAG shape before a real run."""
+    calls) to verify the DAG shape before a real run. With ``estimate_cost``,
+    also forecast spend by routing each agent leaf (no model call) and summing
+    ``route.est_usd`` — the only place real prompt/schema/tier are visible."""
     from .budget import Budget
     from .runtime import Workflow, _load_script
     from .scheduler import Engine
@@ -140,10 +142,31 @@ def dry_run(script_text: str, args=None) -> dict:
         path = f.name
     mod = _load_script(path)
     rd = Path(tempfile.mkdtemp(prefix="flow-dry-"))
-    engine = Engine(run_dir=rd, budget=Budget(max_calls=2000))
+    engine = Engine(run_dir=rd, budget=Budget(max_calls=10000))
+    cost = {"total_usd": 0.0, "total_input_tokens": 0, "total_output_tokens": 0, "by_label": []}
 
     class DryWorkflow(Workflow):
         def agent(self, prompt, **kw):
+            if estimate_cost:
+                try:
+                    needs = set(kw.get("needs") or [])
+                    if kw.get("schema") is not None:
+                        needs.add("structured")
+                    if kw.get("tools"):
+                        needs.add("tool_call")
+                    route = _router.choose(tier=kw.get("tier"), model=kw.get("model"),
+                                           provider=kw.get("provider"), needs=needs)
+                    ei = max(1, len(prompt) // 4)
+                    eo = kw.get("max_tokens") or 400
+                    mult = 2 if (kw.get("schema") is not None and route.backend != "local") else 1
+                    usd = route.est_usd(ei, eo) * mult
+                    cost["total_usd"] += usd
+                    cost["total_input_tokens"] += ei * mult
+                    cost["total_output_tokens"] += eo * mult
+                    cost["by_label"].append({"label": kw.get("label"), "model": route.model,
+                                             "provider": route.provider, "est_usd": round(usd, 6)})
+                except Exception:
+                    pass
             return self.local(lambda: f"<dry:{kw.get('label', 'agent')}>", label=kw.get("label"))
 
     wf = DryWorkflow(engine, script_id="dry")
@@ -151,7 +174,11 @@ def dry_run(script_text: str, args=None) -> dict:
         mod.run(wf, args)
     finally:
         engine.shutdown()
-    return {"ok": True, "leaf_count": engine.report()["leaf_count"]}
+    out = {"ok": True, "leaf_count": engine.report()["leaf_count"]}
+    if estimate_cost:
+        cost["total_usd"] = round(cost["total_usd"], 6)
+        out["cost"] = cost
+    return out
 
 
 def _one_shot(prompt: str, *, tier: Optional[str], timeout: float) -> str:

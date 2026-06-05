@@ -27,6 +27,12 @@ def _cmd_run(a) -> int:
     if not script_path:
         print("error: provide a script path or --nl", file=sys.stderr)
         return 2
+    if getattr(a, "dry_run", False):
+        from . import authoring
+        text = open(script_path, encoding="utf-8").read()
+        out = authoring.dry_run(text, _json(a.args), estimate_cost=getattr(a, "estimate_cost", False))
+        print(json.dumps(out, indent=2, default=str))
+        return 0
     rep = run_workflow(script_path=script_path, args=_json(a.args), budget=_json(a.budget),
                        run_id=a.run_id, executor_kind=a.executor, max_workers=a.max_workers)
     print(json.dumps(rep, ensure_ascii=False, indent=2, default=str))
@@ -132,6 +138,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--run-id")
     r.add_argument("--executor", choices=["thread", "process"], default="thread")
     r.add_argument("--max-workers", type=int, default=None)
+    r.add_argument("--dry-run", action="store_true", help="validate the DAG with local stubs, no model calls")
+    r.add_argument("--estimate-cost", action="store_true", help="with --dry-run: forecast spend per leaf")
     r.set_defaults(fn=_cmd_run)
 
     rs = sub.add_parser("resume", help="resume a crashed/paused run")

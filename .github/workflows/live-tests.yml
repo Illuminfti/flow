@@ -1,0 +1,30 @@
+name: live-tests
+# Credential-gated: hits real provider endpoints. Runs only when secrets exist;
+# otherwise skips clean. The kill-resume smoke needs no credentials and always runs.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # weekly
+jobs:
+  kill-resume:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest tests/test_live_resume.py -v
+  live-providers:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.OPENAI_API_KEY != '' || secrets.OPENROUTER_API_KEY != '' }}
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,http]"
+      - run: python -m pytest -m live -v
