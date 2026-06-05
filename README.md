@@ -159,6 +159,14 @@ laziness, self-preferential bias, goal drift). See **[docs/patterns.md](docs/pat
 
 Setting this up _as an agent_? Read **[AGENTS.md](AGENTS.md)** — it's written for you.
 
+**Install as a skill** (Claude Code / Hermes / any skill-aware agent): drop [`skill/SKILL.md`](skill/SKILL.md) into your skills dir so your agent reaches for flow automatically —
+
+```bash
+mkdir -p ~/.claude/skills/flow && curl -fsSL \
+  https://raw.githubusercontent.com/Illuminfti/flow/main/skill/SKILL.md \
+  -o ~/.claude/skills/flow/SKILL.md
+```
+
 ## License
 
 MIT © Illumi ([@Illuminfti](https://github.com/Illuminfti)) · contributions welcome
