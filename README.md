@@ -49,23 +49,23 @@ flowchart LR
 
 ## Why it's different
 
-|                                     |                        **flow**                         |    Claude Code Workflow    |
-| ----------------------------------- | :-----------------------------------------------------: | :------------------------: |
-| Runs anywhere                       |                ✅ any box, `pip install`                | ❌ inside Claude Code only |
-| Any model                           | ✅ OpenAI · Anthropic · Ollama · DeepSeek · **any CLI** |       ❌ Claude only       |
-| Per-leaf **cost-aware** routing     |             ✅ tiers pick cheapest capable              |        ❌ one tier         |
-| Crash-resume across processes       |              ✅ fsync'd WAL, `flow resume`              |    ⚠️ same-session only    |
-| Transient-error **retry + backoff** |                       ✅ built-in                       |             ❌             |
-| Schema output + auto-repair         |       ✅ real JSON Schema (`jsonschema`) + repair       |             ✅             |
-| Cancellation + deadline cascade     |      ✅ Ctrl+C/SIGTERM/deadline, `wf.cancelled()`       |             ✅             |
-| First-class tools + approval gates  |   ✅ typed tools, per-leaf grants, approval callback    |       ✅ (built-in)        |
-| Cost prediction (dry-run)           |             ✅ `--dry-run --estimate-cost`              |             ❌             |
-| Subscriptions / OAuth (no API key)  |   ✅ Codex (ChatGPT Pro), Claude Max, any token file    |             —              |
-| Cross-run result cache              |              ✅ opt-in, content-addressed               |             ❌             |
-| Inspectable resume state            |             ✅ `flow status` + resume plan              |             ❌             |
-| True concurrency, no async          |                    ✅ two-tier pools                    |        ✅ (~16 cap)        |
-| Dependencies                        |                 **0** (stdlib `urllib`)                 |            n/a             |
-| License                             |                   MIT, yours to fork                    |        proprietary         |
+|                                     |                                  **flow**                                  |    Claude Code Workflow    |
+| ----------------------------------- | :------------------------------------------------------------------------: | :------------------------: |
+| Runs anywhere                       |                         ✅ any box, `pip install`                          | ❌ inside Claude Code only |
+| Any model                           |          ✅ OpenAI · Anthropic · Ollama · DeepSeek · **any CLI**           |       ❌ Claude only       |
+| Per-leaf **cost-aware** routing     |                       ✅ tiers pick cheapest capable                       |        ❌ one tier         |
+| Crash-resume across processes       |                       ✅ fsync'd WAL, `flow resume`                        |    ⚠️ same-session only    |
+| Transient-error **retry + backoff** |                                ✅ built-in                                 |             ❌             |
+| Schema output + auto-repair         |                ✅ real JSON Schema (`jsonschema`) + repair                 |             ✅             |
+| Cancellation + deadline cascade     |                ✅ Ctrl+C/SIGTERM/deadline, `wf.cancelled()`                |             ✅             |
+| First-class tools + approval gates  | ✅ typed tools, per-leaf grants, approval callback (`openai_http` backend) |       ✅ (built-in)        |
+| Cost prediction (dry-run)           |                       ✅ `--dry-run --estimate-cost`                       |             ❌             |
+| Subscriptions / OAuth (no API key)  |             ✅ Codex (ChatGPT Pro), Claude Max, any token file             |             —              |
+| Cross-run result cache              |                        ✅ opt-in, content-addressed                        |             ❌             |
+| Inspectable resume state            |                       ✅ `flow status` + resume plan                       |             ❌             |
+| True concurrency, no async          |                             ✅ two-tier pools                              |        ✅ (~16 cap)        |
+| Dependencies                        |                          **0** (stdlib `urllib`)                           |            n/a             |
+| License                             |                             MIT, yours to fork                             |        proprietary         |
 
 ## Install
 
@@ -127,7 +127,10 @@ wf.spend() / wf.remaining() / wf.has_headroom() / wf.cancelled()   # budget + ca
 
 Tools are first-class: `register_tool(ToolDefinition(name, description, parameters, handler, approval))`,
 then grant per leaf with `wf.agent(..., tools=["my_tool"])`. The model runs a bounded tool-use loop;
-side-effecting tools can require an approval callback.
+side-effecting tools can require an approval callback. The tool-use loop runs on the **`openai_http`
+backend** (OpenAI / DeepSeek / OpenRouter / Ollama / any OpenAI-compatible gateway, incl. Claude via
+a compatible proxy) — a leaf that requests tools on a non-`openai_http` backend **fails closed** with
+a clear error rather than silently dropping the grant. Anthropic-SDK-native tool-use is not yet wired.
 
 ## Models & routing
 
@@ -180,10 +183,11 @@ mkdir -p ~/.claude/skills/flow && curl -fsSL \
 
 ## What's tested vs. what's not (read before trusting a claim)
 
-- **Tested core (unit + clean-install CI):** concurrency, crash-resume (leaf-level), token/usd/calls budgets, schema enforce+repair, retry/backoff, router selection, `local`/`shell_cmd` backends, the offline example.
+- **Tested core (unit + clean-install CI):** concurrency, crash-resume (leaf-level), token/usd/calls budgets, schema enforce+repair, retry/backoff, router selection, cancellation + failure modes, tool-use loop + approval gates, content cache, cost prediction, `local`/`shell_cmd` backends, the offline example.
+- **Tested in CI without credentials:** external-SIGKILL-mid-run-then-resume (real subprocess kill, returncode -9 → resume completes) runs on every push.
 - **Verified live, ad-hoc:** the `codex` (ChatGPT Pro) backend; `openai_http` request/auth/error handling against a real OpenAI-compatible server.
-- **Not yet in CI:** real Anthropic calls, OAuth/subscription routes end-to-end, kill-mid-run crash/resume — these are credential-gated and proven only by hand.
-- **Behaviour to know:** `wf.parallel`/`wf.pipeline` turn a failed thunk/stage into `None` + a warning (check results, or raise yourself); `flow trace` shows `provider/model: null` for leaves that failed _before_ a backend call (e.g. auth); resume reuses a leaf only when `(script, phase, label, prompt, route, schema)` are all identical.
+- **Credential-gated (CI job skips cleanly without secrets):** real Anthropic calls, OAuth/subscription provider routes end-to-end (`pytest -m live`).
+- **Behaviour to know:** tool-use runs on the `openai_http` backend only — a leaf requesting tools on another backend **fails closed** (no silent drop); Anthropic-SDK-native tool-use isn't wired yet. `wf.parallel`/`wf.pipeline` turn a failed thunk/stage into `None` + a warning by default (or pick `mode="fail_fast"`/`"collect_errors"`); `flow trace` shows `provider/model: null` for leaves that failed _before_ a backend call (e.g. auth); resume reuses a leaf only when `(script, phase, label, prompt, route, schema)` are all identical.
 
 ## License
 
