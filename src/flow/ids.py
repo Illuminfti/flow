@@ -36,12 +36,13 @@ def new_run_id(slug: str = "run") -> str:
 
 
 def leaf_id(*, run_script: str, phase: str, label: str, prompt: str,
-            model: str, backend: str) -> str:
+            model: str, backend: str, schema: str = "") -> str:
     """Content-addressed leaf id == resume + cache key.
 
-    Identical (script, phase, label, prompt, model, backend) → identical id →
-    a completed result is reused verbatim on resume. This is what makes a
-    crashed run resume from the longest unchanged prefix.
+    Identical (script, phase, label, prompt, model, backend, schema) →
+    identical id → a completed result is reused verbatim on resume. ``schema``
+    is part of the key: two otherwise-identical leaves with different output
+    schemas are different work and must NOT share a cached result.
     """
     return "l-" + stable_hash(
         {
@@ -51,6 +52,7 @@ def leaf_id(*, run_script: str, phase: str, label: str, prompt: str,
             "prompt": prompt,
             "model": model,
             "backend": backend,
+            "schema": schema,
         },
         length=16,
     )

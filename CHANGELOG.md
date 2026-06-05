@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.1 — audit fixes (Albedo dogfood audit, 2026-06-05)
+
+- **Fix release blocker:** ship `constants.py` + `backends/codex.py` and all new
+  files (were untracked → clean clone failed to `import flow`). Added an
+  `install-smoke` CI job (build wheel → clean venv → import + CLI + self-test +
+  example) so this can't recur.
+- **Subscriptions / OAuth:** `codex` backend (ChatGPT Pro Responses API) + generic
+  token sources (`auth_env`/`auth_file`+`auth_field`/`auth_cmd`) + custom headers —
+  use subscriptions, not just API keys.
+- **Real JSON Schema validation** via `jsonschema` (`flow[schema]`); documented
+  top-level subset fallback when absent.
+- **Leaf identity includes the output schema** — two same-prompt leaves with
+  different schemas no longer collide in the resume/dedup cache.
+- **Phase scoping is concurrency-safe** — context-scoped current phase; parallel/
+  pipeline thunks capture the phase active at submission.
+- **Structured spans:** `flow trace --json`.
+- Honest docs: resume is leaf-level (not full-graph snapshot); schema needs
+  `jsonschema` for full validation.
+
 ## 1.0.0
 
 Initial public release.

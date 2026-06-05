@@ -83,8 +83,21 @@ def _validate(value: Any, schema: Any) -> Tuple[bool, Optional[str]]:
             return True, None
         except Exception as exc:  # pydantic ValidationError
             return False, str(exc)[:600]
-    # dict JSON Schema: light structural check (required keys + type:object/array)
     js = schema if isinstance(schema, dict) else {}
+    # Full JSON Schema validation when `jsonschema` is installed (flow[yaml]/[all]
+    # or pip install jsonschema): nested objects, enums, arrays/items,
+    # additionalProperties, oneOf/anyOf, numeric bounds, etc.
+    try:
+        import jsonschema
+        try:
+            jsonschema.validate(value, js)
+            return True, None
+        except jsonschema.ValidationError as exc:
+            return False, str(exc).splitlines()[0][:600]
+    except ImportError:
+        pass
+    # Fallback: documented strict SUBSET — top-level type + required keys only.
+    # (Install jsonschema for full validation; this catches the common cases.)
     t = js.get("type")
     if t == "object" and not isinstance(value, dict):
         return False, f"expected object, got {type(value).__name__}"

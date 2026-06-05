@@ -136,7 +136,13 @@ Drive flow with the OAuth products you already pay for — **ChatGPT Pro (Codex)
 flow run myflow.py --run-id audit-42      # crashes? kill it, then:
 flow resume audit-42 myflow.py            # completed leaves are skipped, not recomputed
 flow trace audit-42                        # per-leaf model / cost / latency / retries
+flow trace audit-42 --json                 # structured spans (machine-readable)
 ```
+
+Resume is **leaf-level**: it replays the WAL and skips any leaf that reached a
+terminal state, re-running interrupted ones — not a full workflow-graph snapshot.
+**Schema** validation uses `jsonschema` when installed (`flow[schema]` — full
+nested/enum/array/oneOf checks); without it, a documented top-level subset.
 
 ## Patterns
 

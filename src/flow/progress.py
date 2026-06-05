@@ -105,6 +105,21 @@ def _aggregate(run_id: str) -> Optional[dict]:
     }
 
 
+def spans(run_id: str) -> list:
+    """Structured per-leaf spans (the machine-readable form of ``trace``)."""
+    agg = _aggregate(run_id)
+    if not agg:
+        return []
+    out = []
+    for ph in agg["phases"]:
+        for e in agg["by_phase"].get(ph, []):
+            out.append({"phase": ph, "label": e.get("label"), "status": e.get("status"),
+                        "provider": e.get("provider"), "model": e.get("model"),
+                        "tokens": e.get("tokens", 0), "usd": e.get("usd", 0.0),
+                        "elapsed_s": e.get("elapsed_s", 0.0), "attempts": e.get("attempts", 1)})
+    return out
+
+
 def _bar(value: float, peak: float, width: int = 10) -> str:
     if peak <= 0:
         return "░" * width

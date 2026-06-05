@@ -16,6 +16,7 @@ spawn run concurrently on the leaf pool. Real concurrency, unlike the old stub.
 """
 from __future__ import annotations
 
+import contextvars
 import importlib.util
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -28,16 +29,25 @@ from .leaves import LeafRequest
 from .paths import run_dir_for
 from .scheduler import Engine
 
+# Context-scoped current phase (see Workflow._phase) — concurrency-safe labelling.
+_CURRENT_PHASE: contextvars.ContextVar[str] = contextvars.ContextVar("flow_phase", default="init")
+
 
 class Workflow:
     def __init__(self, engine: Engine, *, script_id: str):
         self._engine = engine
         self._script_id = script_id
-        self._phase = "init"
+
+    @property
+    def _phase(self) -> str:
+        # Context-scoped, not a shared attribute: parallel/pipeline thunks each
+        # capture the phase active at submission, so concurrent branches can't
+        # clobber each other's phase label.
+        return _CURRENT_PHASE.get()
 
     # -- phase / log -----------------------------------------------------
     def phase(self, name: str) -> None:
-        self._phase = name
+        _CURRENT_PHASE.set(name)
         self._engine.phase(name)
 
     def log(self, message: str, **fields: Any) -> None:
@@ -87,6 +97,7 @@ class Workflow:
         lid = compute_leaf_id(
             run_script=self._script_id, phase=self._phase, label=label,
             prompt=prompt, model=route.model, backend=route.backend,
+            schema=stable_hash(schema) if schema is not None else "",
         )
         req = LeafRequest(
             leaf_id=lid, label=label, phase=self._phase, prompt=prompt, route=route,
@@ -125,8 +136,18 @@ class Workflow:
         return res.value
 
     # -- combinators -----------------------------------------------------
+    def _bind_phase(self, fn: Callable) -> Callable:
+        """Wrap a thunk so it runs in the pool thread with the phase that was
+        active when it was submitted (phase scoping under concurrency)."""
+        phase = _CURRENT_PHASE.get()
+
+        def runner(*a, **k):
+            _CURRENT_PHASE.set(phase)
+            return fn(*a, **k)
+        return runner
+
     def parallel(self, thunks: list[Callable[[], Any]]) -> list[Any]:
-        futures = [self._engine.orch_pool.submit(t) for t in thunks]
+        futures = [self._engine.orch_pool.submit(self._bind_phase(t)) for t in thunks]
         out = []
         for f in futures:
             try:
@@ -145,7 +166,8 @@ class Workflow:
                 cur = stage(cur, item, idx)
             return cur
 
-        futures = [self._engine.orch_pool.submit(run_item, it, i) for i, it in enumerate(items)]
+        futures = [self._engine.orch_pool.submit(self._bind_phase(run_item), it, i)
+                   for i, it in enumerate(items)]
         out = []
         for f in futures:
             try:
@@ -160,12 +182,13 @@ class Workflow:
         """Run a nested workflow as a leaf. Shares the same engine + pools —
         flat resource model, arbitrary logical nesting (no depth cap, unlike
         delegate_task's hard 3)."""
-        saved = self._phase
-        self.phase(f"{saved}/{label}")
+        saved = _CURRENT_PHASE.get()
+        token = _CURRENT_PHASE.set(f"{saved}/{label}")
+        self._engine.phase(f"{saved}/{label}")
         try:
             return fn(self, inputs)
         finally:
-            self._phase = saved
+            _CURRENT_PHASE.reset(token)
 
 
 def _load_script(script_path: str):

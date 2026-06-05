@@ -41,7 +41,10 @@ def _cmd_resume(a) -> int:
 
 
 def _cmd_trace(a) -> int:
-    print(progress_mod.trace(a.run_id))
+    if getattr(a, "json", False):
+        print(json.dumps(progress_mod.spans(a.run_id), indent=2, default=str))
+    else:
+        print(progress_mod.trace(a.run_id))
     return 0
 
 
@@ -132,6 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     t = sub.add_parser("trace", help="render a run's span tree")
     t.add_argument("run_id")
+    t.add_argument("--json", action="store_true", help="emit structured spans instead of the dashboard")
     t.set_defaults(fn=_cmd_trace)
 
     au = sub.add_parser("author", help="author a script from NL (no run)")

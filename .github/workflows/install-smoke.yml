@@ -1,0 +1,37 @@
+name: install-smoke
+# Proves the package installs and runs from a clean build — catches files that
+# exist locally but were never committed/packaged (the constants.py break).
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+      - name: Install the wheel into a clean venv (no source tree)
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install dist/*.whl
+      - name: Import + CLI + offline self-test (from the installed package)
+        run: |
+          cd /tmp                       # ensure we import the installed pkg, not ./src
+          /tmp/clean/bin/python -c "import flow; print('flow', flow.__version__)"
+          /tmp/clean/bin/flow --help
+          /tmp/clean/bin/flow doctor
+          /tmp/clean/bin/flow self-test --offline
+      - name: Run a local-only example end-to-end
+        run: |
+          /tmp/clean/bin/flow run "$GITHUB_WORKSPACE/src/flow/templates/selftest.py" --args '{"n":4}'
