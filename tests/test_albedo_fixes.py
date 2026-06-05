@@ -33,7 +33,7 @@ def test_same_prompt_different_schema_not_cached(monkeypatch):
         r2 = wf.agent("same prompt", label="x", schema=S2, tier="quality")
         return [r1, r2]
 
-    rep = run_workflow(run_fn=run, slug="schemacache")
+    run_workflow(run_fn=run, slug="schemacache")
     assert calls["n"] == 2  # both ran — NOT collapsed into one cache hit
 
 
