@@ -6,12 +6,14 @@ yourself or your user. Follow these steps in order. Each is copy-pasteable.
 ## 1. Install
 
 ```bash
-pipx install flowleaf            # preferred (isolated)
+pipx install "git+https://github.com/Illuminfti/flowleaf"          # preferred (isolated)
 # or
-pip install "flowleaf[yaml,anthropic]"
+pip install "flowleaf[yaml,anthropic] @ git+https://github.com/Illuminfti/flowleaf"
 # or
-uv tool install flowleaf
+uv tool install "git+https://github.com/Illuminfti/flowleaf"
 ```
+
+(PyPI release coming soon; install from git for now.)
 
 ## 2. Configure
 

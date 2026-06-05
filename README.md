@@ -35,9 +35,12 @@ It is **model-agnostic** (any OpenAI-compatible API, Anthropic, Ollama/LM Studio
 ## Install
 
 ```bash
-pipx install flowleaf            # or: pip install "flowleaf[yaml,anthropic]"
-uv tool install flowleaf
+pipx install "git+https://github.com/Illuminfti/flowleaf"
+# or:  pip install "flowleaf[yaml,anthropic] @ git+https://github.com/Illuminfti/flowleaf"
+# or:  uv tool install "git+https://github.com/Illuminfti/flowleaf"
 ```
+
+> PyPI release (`pipx install flowleaf`) coming soon; install from git for now.
 
 ## 30-second quickstart
 

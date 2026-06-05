@@ -4,12 +4,13 @@
 set -euo pipefail
 
 echo "🍃 installing flowleaf..."
+SRC="git+https://github.com/Illuminfti/flowleaf"
 if command -v uv >/dev/null 2>&1; then
-  uv tool install flowleaf || uv tool upgrade flowleaf
+  uv tool install "$SRC"
 elif command -v pipx >/dev/null 2>&1; then
-  pipx install flowleaf || pipx upgrade flowleaf
+  pipx install "$SRC" || pipx install --force "$SRC"
 else
-  python3 -m pip install --user --upgrade "flowleaf[yaml]"
+  python3 -m pip install --user --upgrade "flowleaf[yaml] @ $SRC"
 fi
 
 echo "⚙️  writing config..."
