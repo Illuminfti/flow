@@ -11,6 +11,7 @@ from .budget import Budget, BudgetExceeded
 from .config import ConfigError
 from .router import RouterError, choose
 from .runtime import ExecutionResult, FailureMode, ParallelError, Workflow, run_workflow
+from .tools import ToolDefinition, register_tool
 
 __version__ = "1.0.1"
 
@@ -27,6 +28,8 @@ __all__ = [
     "FailureMode",
     "ExecutionResult",
     "ParallelError",
+    "register_tool",
+    "ToolDefinition",
     "choose",
     "__version__",
 ]

@@ -39,6 +39,8 @@ _DEFAULTS: dict[str, Any] = {
         "denylist": r"(?:^|[-_/])(mini|flash|haiku|nano|lite)(?:$|[-_/0-9.])",
         "noise_patterns": [],
         "ignore_user_config": True,
+        "max_tool_iterations": 8,
+        "content_cache": {"enabled": False, "ttl_days": None},
     },
     "providers": {},
     "models": {},

@@ -113,25 +113,29 @@ class Workflow:
         needs: Optional[set] = None,
         max_tokens: Optional[int] = None,
         timeout: Optional[float] = None,
+        tools: Optional[list] = None,
+        tool_approval_gates: Optional[dict] = None,
         required: bool = True,
     ) -> Any:
         label = label or f"agent-{stable_hash(prompt, 8)}"
         needs = set(needs or [])
         if schema is not None:
             needs.add("structured")
+        if tools:
+            needs.add("tool_call")  # only route to tool-capable models
         route = router_mod.choose(
             tier=tier, model=model, provider=provider, toolsets=toolsets,
             backend=backend, needs=needs,
         )
+        schema_hash = stable_hash(schema) if schema is not None else ""
         lid = compute_leaf_id(
             run_script=self._script_id, phase=self._phase, label=label,
-            prompt=prompt, model=route.model, backend=route.backend,
-            schema=stable_hash(schema) if schema is not None else "",
+            prompt=prompt, model=route.model, backend=route.backend, schema=schema_hash,
         )
         req = LeafRequest(
             leaf_id=lid, label=label, phase=self._phase, prompt=prompt, route=route,
-            toolsets=toolsets, schema=schema, max_tokens=max_tokens,
-            timeout=timeout,
+            toolsets=toolsets, schema=schema, schema_hash=schema_hash, max_tokens=max_tokens,
+            timeout=timeout, tools=list(tools or []), tool_approval_gates=dict(tool_approval_gates or {}),
         )
         res = self._engine.submit_leaf(req)
         if res.status != "completed":

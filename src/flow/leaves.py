@@ -32,6 +32,9 @@ class LeafRequest:
     local_fn: Optional[Callable[..., Any]] = None
     local_args: tuple = ()
     local_kwargs: dict = field(default_factory=dict)
+    schema_hash: str = ""                              # for cross-run cache key parity
+    tools: list = field(default_factory=list)          # granted tool names
+    tool_approval_gates: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -53,6 +56,7 @@ class LeafResult:
     repaired: bool = False
     tokens_estimated: bool = False
     attempts: int = 1
+    tool_calls_made: int = 0
     error: Optional[str] = None
 
     def as_dict(self) -> dict:
@@ -75,13 +79,19 @@ def run_leaf(req: LeafRequest) -> LeafResult:
     rc = _retry_config()
     stats = {"attempts": 0}
 
+    kw = {}
+    if req.tools:
+        if backend_kind != "openai_http":
+            return _fail(req, f"tools require an openai_http backend, got {backend_kind!r}", started)
+        kw = {"tools": req.tools, "approval_gates": req.tool_approval_gates}
+
     def model_call(text_prompt: str) -> BackendResponse:
         # P1: retry transient (retryable) backend errors with jittered backoff.
         last: Exception = BackendError("no attempt")
         for attempt in range(rc["max_attempts"]):
             stats["attempts"] += 1
             try:
-                return backend(text_prompt, timeout=req.timeout)
+                return backend(text_prompt, timeout=req.timeout, **kw)
             except BackendError as exc:
                 last = exc
                 if not getattr(exc, "retryable", False) or attempt == rc["max_attempts"] - 1:
@@ -138,7 +148,7 @@ def run_leaf(req: LeafRequest) -> LeafResult:
         input_tokens=raw.input_tokens, output_tokens=raw.output_tokens, usd=raw.usd,
         elapsed_s=round(time.time() - started, 3), pid=os.getpid(),
         repaired=repaired, tokens_estimated=raw.tokens_estimated,
-        attempts=stats["attempts"], error=error,
+        attempts=stats["attempts"], tool_calls_made=getattr(raw, "tool_calls_made", 0), error=error,
     )
 
 

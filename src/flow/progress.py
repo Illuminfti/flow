@@ -105,6 +105,65 @@ def _aggregate(run_id: str) -> Optional[dict]:
     }
 
 
+def resume_plan(run_id: str) -> dict:
+    """What `flow resume` would do per leaf: 'skip' (terminal + result file on
+    disk) or 'rerun' (interrupted / cancelled / failed). Includes the estimated
+    USD of the rerun set."""
+    from .journal import Journal
+    agg = _aggregate(run_id)
+    if not agg:
+        return {"plan": {}, "skip": 0, "rerun": 0, "estimated_rerun_usd": 0.0}
+    skip_ids = set(Journal(run_dir_for(run_id)).completed_leaves().keys())
+    plan, rerun_usd = {}, 0.0
+    for lid, e in agg["leaves"].items():
+        if lid in skip_ids:
+            plan[lid] = "skip"
+        else:
+            plan[lid] = "rerun"
+            rerun_usd += e.get("usd", 0.0) or 0.0
+    return {"plan": plan, "skip": sum(1 for v in plan.values() if v == "skip"),
+            "rerun": sum(1 for v in plan.values() if v == "rerun"),
+            "estimated_rerun_usd": round(rerun_usd, 6)}
+
+
+def status_report(run_id: str) -> Optional[dict]:
+    """Inspectable durable workflow state: node-state manifest + resume plan."""
+    agg = _aggregate(run_id)
+    if not agg:
+        return None
+    nodes = {lid: {"label": e.get("label"), "phase": e.get("phase"), "status": e.get("status"),
+                   "attempts": e.get("attempts", 1), "model": e.get("model"),
+                   "provider": e.get("provider"), "tokens": e.get("tokens", 0), "usd": e.get("usd", 0.0)}
+             for lid, e in agg["leaves"].items()}
+    return {"run_id": run_id, "phases": agg["phases"], "nodes": nodes,
+            "count": agg["count"], "failed": agg["failed"], "retries": agg["retries"],
+            "total_usd": agg["total_usd"], "total_tok": agg["total_tok"],
+            "resume": resume_plan(run_id)}
+
+
+def render_status(report: Optional[dict]) -> str:
+    if not report:
+        return "no state for this run"
+    g = {"completed": "✓", "failed": "✗", "schema_failed": "⚠", "cached": "◍",
+         "cancelled": "⊘", "running": "◌"}
+    lines = [f"flow status · {report['run_id']}",
+             f"  {report['count']} nodes · {report['failed']} failed · "
+             f"{report['total_tok']:,} tok · ${report['total_usd']:.4f}"]
+    by_phase: dict = {}
+    for lid, n in report["nodes"].items():
+        by_phase.setdefault(n.get("phase") or "?", []).append(n)
+    for ph in report["phases"]:
+        if ph not in by_phase:
+            continue
+        lines.append(f"  ▍ {ph}")
+        for n in by_phase[ph]:
+            att = f" ×{n['attempts']}" if (n.get("attempts") or 1) > 1 else ""
+            lines.append(f"    {g.get(n['status'], '?')} {n['label']}{att}")
+    r = report["resume"]
+    lines.append(f"  resume impact: {r['rerun']} rerun · {r['skip']} skip · ~${r['estimated_rerun_usd']:.4f}")
+    return "\n".join(lines)
+
+
 def spans(run_id: str) -> list:
     """Structured per-leaf spans (the machine-readable form of ``trace``)."""
     agg = _aggregate(run_id)

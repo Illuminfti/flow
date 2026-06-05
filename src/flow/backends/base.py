@@ -20,6 +20,7 @@ class BackendResponse:
     provider: str = ""
     model: str = ""
     native: Any = None  # local backend preserves the real Python return value
+    tool_calls_made: int = 0  # tool turns executed in a tool-use loop
 
 
 class BackendError(RuntimeError):
@@ -40,4 +41,5 @@ class BackendError(RuntimeError):
 
 @runtime_checkable
 class Backend(Protocol):
-    def __call__(self, prompt: str, *, timeout: float | None = None) -> BackendResponse: ...
+    def __call__(self, prompt: str, *, timeout: float | None = None,
+                 tools: "list | None" = None, approval_gates: "dict | None" = None) -> BackendResponse: ...

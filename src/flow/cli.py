@@ -48,6 +48,15 @@ def _cmd_trace(a) -> int:
     return 0
 
 
+def _cmd_status(a) -> int:
+    rep = progress_mod.status_report(a.run_id)
+    if getattr(a, "json", False):
+        print(json.dumps(rep, indent=2, default=str))
+    else:
+        print(progress_mod.render_status(rep))
+    return 0
+
+
 def _cmd_author(a) -> int:
     from . import authoring
     print(authoring.author_and_save(a.task, a.out))
@@ -137,6 +146,11 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("run_id")
     t.add_argument("--json", action="store_true", help="emit structured spans instead of the dashboard")
     t.set_defaults(fn=_cmd_trace)
+
+    stt = sub.add_parser("status", help="inspect node states + what resume would re-run")
+    stt.add_argument("run_id")
+    stt.add_argument("--json", action="store_true")
+    stt.set_defaults(fn=_cmd_status)
 
     au = sub.add_parser("author", help="author a script from NL (no run)")
     au.add_argument("task")

@@ -128,9 +128,14 @@ class Engine:
         est_in = max(1, len(req.prompt) // 4)
         est_out = req.max_tokens or 400
         est_usd = req.route.est_usd(est_in, est_out)
-        # F5: a schema leaf may make two model calls (initial + one repair) —
-        # gate on the worst case, commit on the truth.
-        mult = 2 if (schema_mod.is_schema(req.schema) and req.route.backend != "local") else 1
+        # F5: a schema leaf may make two model calls (initial + one repair); a
+        # tool leaf runs a multi-turn loop — gate on the worst case, commit truth.
+        mult = 1
+        if req.route.backend != "local":
+            if schema_mod.is_schema(req.schema):
+                mult += 1
+            if getattr(req, "tools", None):
+                mult += 2
 
         try:
             self.budget.reserve(est_tokens=(est_in + est_out) * mult, est_usd=est_usd * mult)

@@ -26,6 +26,7 @@ def register_backend(kind: str, builder: Callable) -> None:
 
 
 def _build_openai_http(req, cfg, prov) -> Backend:
+    leaf = cfg.get("leaf") or {}
     return OpenAIHTTPBackend(
         base_url=prov.get("base_url", "https://api.openai.com/v1"),
         api_key=_config.api_key_for(prov),
@@ -34,6 +35,7 @@ def _build_openai_http(req, cfg, prov) -> Backend:
         max_tokens=req.max_tokens,
         pricing=req.route.pricing,
         extra_headers=dict(prov.get("headers") or {}),
+        max_tool_iterations=int(leaf.get("max_tool_iterations", 8)),
     )
 
 
