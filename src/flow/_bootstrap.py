@@ -5,48 +5,50 @@ import json
 import os
 from pathlib import Path
 
-_TEMPLATE = """\
-# flow config — https://github.com/Illuminfti/flow
-# Models work with ZERO code edits. Set the api_key_env vars in your shell.
-engine:
-  executor: thread
-  budget: {max_calls: 1000}
+_CONFIG = {
+    "engine": {"executor": "thread", "budget": {"max_calls": 1000}},
+    "leaf": {"allow_light_models": False},
+    "providers": {
+        "openai": {"kind": "openai_http", "base_url": "https://api.openai.com/v1", "auth_env": "OPENAI_API_KEY"},
+        "anthropic": {"kind": "anthropic_sdk", "auth_env": "ANTHROPIC_API_KEY"},
+        "deepseek": {"kind": "openai_http", "base_url": "https://api.deepseek.com", "auth_env": "DEEPSEEK_API_KEY"},
+        "ollama": {"kind": "openai_http", "base_url": "${OLLAMA_HOST:-http://localhost:11434}/v1", "auth_env": None},
+        # Subscriptions / OAuth — no per-token cost. See docs/subscriptions.md
+        "codex": {"kind": "codex", "auth_file": "~/.codex/auth.json",
+                  "auth_field": "tokens.access_token", "account_field": "tokens.account_id"},
+        "claude-cli": {"kind": "shell_cmd", "cmd_template": ["claude", "-p", "{prompt}"]},
+    },
+    "models": {
+        "gpt-4o": {"provider": "openai", "id": "gpt-4o", "in": 2.5, "out": 10.0, "free": False,
+                   "caps": ["reasoning", "tool_call", "structured", "vision"]},
+        "claude-opus": {"provider": "anthropic", "id": "claude-opus-4-6", "in": 5.0, "out": 25.0, "free": False,
+                        "caps": ["reasoning", "tool_call", "structured", "vision"]},
+        "deepseek-v3": {"provider": "deepseek", "id": "deepseek-chat", "in": 0.27, "out": 1.10, "free": False,
+                        "caps": ["reasoning", "tool_call", "structured"]},
+        "llama3-local": {"provider": "ollama", "id": "llama3", "in": 0.0, "out": 0.0, "free": True,
+                         "caps": ["tool_call"]},
+        "gpt55-sub": {"provider": "codex", "id": "gpt-5.5", "in": 0.0, "out": 0.0, "free": True,
+                      "caps": ["reasoning", "tool_call", "structured"]},
+    },
+    "tiers": {"quality": ["gpt-4o", "claude-opus"], "cheap": ["deepseek-v3", "gpt-4o"],
+              "free": ["gpt55-sub", "llama3-local"], "local": []},
+    "defaults": {"tier": "quality"},
+}
 
-leaf:
-  allow_light_models: false   # set true to permit -mini/-flash/-haiku/-nano/-lite
 
-providers:
-  openai:    {kind: openai_http,   base_url: "https://api.openai.com/v1", auth_env: OPENAI_API_KEY}
-  anthropic: {kind: anthropic_sdk, auth_env: ANTHROPIC_API_KEY}
-  deepseek:  {kind: openai_http,   base_url: "https://api.deepseek.com",  auth_env: DEEPSEEK_API_KEY}
-  ollama:    {kind: openai_http,   base_url: "${OLLAMA_HOST:-http://localhost:11434}/v1", auth_env: null}
-  # Subscriptions / OAuth — no per-token cost. See docs/subscriptions.md
-  codex:     {kind: codex, auth_file: "~/.codex/auth.json", auth_field: "tokens.access_token", account_field: "tokens.account_id"}
-  claude-cli: {kind: shell_cmd, cmd_template: ["claude","-p","{prompt}"]}   # Claude Max via official CLI
-
-models:
-  gpt-4o:       {provider: openai,    id: gpt-4o,          in: 2.5,  out: 10.0, free: false, caps: [reasoning, tool_call, structured, vision]}
-  claude-opus:  {provider: anthropic, id: claude-opus-4-6, in: 5.0,  out: 25.0, free: false, caps: [reasoning, tool_call, structured, vision]}
-  deepseek-v3:  {provider: deepseek,  id: deepseek-chat,   in: 0.27, out: 1.10, free: false, caps: [reasoning, tool_call, structured]}
-  llama3-local: {provider: ollama,    id: llama3,          in: 0.0,  out: 0.0,  free: true,  caps: [tool_call]}
-  gpt55-sub:    {provider: codex,     id: gpt-5.5,         in: 0.0,  out: 0.0,  free: true,  caps: [reasoning, tool_call, structured]}
-
-tiers:
-  quality: [gpt-4o, claude-opus]
-  cheap:   [deepseek-v3, gpt-4o]
-  free:    [gpt55-sub, llama3-local]   # subscription first — zero per-token cost
-  local:   []
-
-defaults:
-  tier: quality
-"""
+def _yaml_available() -> bool:
+    import importlib.util
+    return importlib.util.find_spec("yaml") is not None
 
 
 def config_path() -> Path:
     if os.environ.get("FLOW_CONFIG"):
         return Path(os.environ["FLOW_CONFIG"])
     xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(xdg) / "flow" / "config.yaml"
+    # Write JSON by default (readable with zero deps); YAML only if PyYAML is
+    # present, so the default install's `init`→`self-test` path always works.
+    ext = "yaml" if _yaml_available() else "json"
+    return Path(xdg) / "flow" / f"config.{ext}"
 
 
 def cmd_init(force: bool = False) -> int:
@@ -55,7 +57,14 @@ def cmd_init(force: bool = False) -> int:
     if p.exists() and not force:
         print(f"config already exists: {p} (use --force to overwrite)")
     else:
-        p.write_text(_TEMPLATE, encoding="utf-8")
+        if p.suffix == ".yaml":
+            import yaml
+            body = ("# flow config — https://github.com/Illuminfti/flow\n"
+                    "# Add any model with zero code edits. Subscriptions: docs/subscriptions.md\n"
+                    + yaml.safe_dump(_CONFIG, sort_keys=False))
+        else:
+            body = json.dumps(_CONFIG, indent=2)
+        p.write_text(body, encoding="utf-8")
         print(f"wrote {p}")
     keys = [k for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY") if os.environ.get(k)]
     print(f"detected API keys in env: {keys or 'none — export at least one, or run a local model via ollama'}")

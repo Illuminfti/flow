@@ -1,6 +1,19 @@
 # Changelog
 
-## 1.0.1 — audit fixes (Albedo dogfood audit, 2026-06-05)
+## 1.0.1 — audit fixes (Albedo dogfood audits ×2, 2026-06-05)
+
+Re-audit round (score 4.0 → 7.4):
+
+- **Fix first-run DX break:** `flow init` now writes `config.json` (zero-dep
+  readable) instead of YAML, so the default install's `init`→`self-test --offline`
+  works without PyYAML. Loader reads `.json` or `.yaml`. CI now runs that exact path.
+- **Offline, key-free example** (`examples/offline_local.py`) runs in CI.
+- `flow selftest` accepted as an alias for `flow self-test`.
+- Honest README: parallel/pipeline turn failures into `None`+warning; `trace` shows
+  null provider/model for pre-backend failures; resume identity keys; a "tested vs
+  not" section separating CI-proven core from credential-gated live paths.
+
+First round:
 
 - **Fix release blocker:** ship `constants.py` + `backends/codex.py` and all new
   files (were untracked → clean clone failed to `import flow`). Added an

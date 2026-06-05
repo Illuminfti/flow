@@ -154,11 +154,12 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--force", action="store_true")
     i.set_defaults(fn=_cmd_init)
 
-    st = sub.add_parser("self-test", help="prove it works (offline by default)")
-    st.add_argument("--online", action="store_true", help="also make one real model call")
-    st.add_argument("--offline", action="store_true", help="(default) no network")
-    st.add_argument("--json", action="store_true")
-    st.set_defaults(fn=_cmd_selftest)
+    for alias in ("self-test", "selftest"):  # accept both spellings
+        st = sub.add_parser(alias, help="prove it works (offline by default)")
+        st.add_argument("--online", action="store_true", help="also make one real model call")
+        st.add_argument("--offline", action="store_true", help="(default) no network")
+        st.add_argument("--json", action="store_true")
+        st.set_defaults(fn=_cmd_selftest)
     return p
 
 

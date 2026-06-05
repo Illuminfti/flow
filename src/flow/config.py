@@ -75,8 +75,10 @@ def _candidate_paths() -> list[Path]:
     if os.environ.get("FLOW_CONFIG"):
         paths.append(Path(os.environ["FLOW_CONFIG"]))
     paths.append(Path.cwd() / ".flow.yaml")
+    paths.append(Path.cwd() / ".flow.json")
     xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     paths.append(Path(xdg) / "flow" / "config.yaml")
+    paths.append(Path(xdg) / "flow" / "config.json")
     return paths
 
 

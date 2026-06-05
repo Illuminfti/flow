@@ -25,13 +25,16 @@ jobs:
         run: |
           python -m venv /tmp/clean
           /tmp/clean/bin/pip install dist/*.whl
-      - name: Import + CLI + offline self-test (from the installed package)
+      - name: Import + CLI + the documented default first-run path
         run: |
           cd /tmp                       # ensure we import the installed pkg, not ./src
+          export XDG_CONFIG_HOME=/tmp/cfg FLOW_DATA_DIR=/tmp/data
           /tmp/clean/bin/python -c "import flow; print('flow', flow.__version__)"
           /tmp/clean/bin/flow --help
+          /tmp/clean/bin/flow init                 # writes config the default install can read (no PyYAML)
           /tmp/clean/bin/flow doctor
-          /tmp/clean/bin/flow self-test --offline
-      - name: Run a local-only example end-to-end
+          /tmp/clean/bin/flow self-test --offline  # must pass AFTER init, on the bare wheel
+      - name: Run the offline, key-free example end-to-end
         run: |
-          /tmp/clean/bin/flow run "$GITHUB_WORKSPACE/src/flow/templates/selftest.py" --args '{"n":4}'
+          export XDG_CONFIG_HOME=/tmp/cfg FLOW_DATA_DIR=/tmp/data
+          /tmp/clean/bin/flow run "$GITHUB_WORKSPACE/examples/offline_local.py" --args '{"n":4}'

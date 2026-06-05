@@ -12,7 +12,7 @@ from .config import ConfigError
 from .router import RouterError, choose
 from .runtime import Workflow, run_workflow
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 __all__ = [
     "Workflow",

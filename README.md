@@ -167,6 +167,13 @@ mkdir -p ~/.claude/skills/flow && curl -fsSL \
   -o ~/.claude/skills/flow/SKILL.md
 ```
 
+## What's tested vs. what's not (read before trusting a claim)
+
+- **Tested core (unit + clean-install CI):** concurrency, crash-resume (leaf-level), token/usd/calls budgets, schema enforce+repair, retry/backoff, router selection, `local`/`shell_cmd` backends, the offline example.
+- **Verified live, ad-hoc:** the `codex` (ChatGPT Pro) backend; `openai_http` request/auth/error handling against a real OpenAI-compatible server.
+- **Not yet in CI:** real Anthropic calls, OAuth/subscription routes end-to-end, kill-mid-run crash/resume — these are credential-gated and proven only by hand.
+- **Behaviour to know:** `wf.parallel`/`wf.pipeline` turn a failed thunk/stage into `None` + a warning (check results, or raise yourself); `flow trace` shows `provider/model: null` for leaves that failed _before_ a backend call (e.g. auth); resume reuses a leaf only when `(script, phase, label, prompt, route, schema)` are all identical.
+
 ## License
 
 MIT © Illumi ([@Illuminfti](https://github.com/Illuminfti)) · contributions welcome
