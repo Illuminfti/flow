@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from flowleaf import config
+from flow import config
 
 TEST_CONFIG = {
     "engine": {"executor": "thread", "budget": {"max_calls": 1000},
@@ -31,10 +31,10 @@ TEST_CONFIG = {
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
-    monkeypatch.setenv("FLOWLEAF_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("FLOW_DATA_DIR", str(tmp_path / "data"))
     cfgp = tmp_path / "config.json"
     cfgp.write_text(json.dumps(TEST_CONFIG))
-    monkeypatch.setenv("FLOWLEAF_CONFIG", str(cfgp))
+    monkeypatch.setenv("FLOW_CONFIG", str(cfgp))
     config.get(reload=True)
     yield
     config.set_config(None) if hasattr(config, "set_config") else None

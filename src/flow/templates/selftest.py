@@ -1,5 +1,5 @@
 """Local-only self-test workflow — exercises phase/parallel/pipeline/local/
-nested without a single model call. `flowleaf run flowleaf/templates/selftest.py`."""
+nested without a single model call. `flow run flow/templates/selftest.py`."""
 import time
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import sys
 
-from flowleaf.runtime import run_workflow
+from flow.runtime import run_workflow
 
 RUN_ID = "crash-fixed-001"
 SCRIPT_ID = "crash-script"
@@ -30,7 +30,7 @@ def build_run(sentinel_path, crash_at, crash_marker, n=5):
 
 def main():
     data_dir, sentinel, crash_at, crash_marker = sys.argv[1:5]
-    os.environ["FLOWLEAF_DATA_DIR"] = data_dir
+    os.environ["FLOW_DATA_DIR"] = data_dir
     run_workflow(run_fn=build_run(sentinel, int(crash_at), crash_marker),
                  run_id=RUN_ID, script_id=SCRIPT_ID, slug="crash", max_workers=1)
     print("done")

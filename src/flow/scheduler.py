@@ -1,7 +1,7 @@
 """The engine: two-tier concurrent scheduler with budget gate + crash-durable
 journal.
 
-Tier 1 — leaf pool: the real concurrency throttle (FLOWLEAF_MAX_WORKERS). Every unit
+Tier 1 — leaf pool: the real concurrency throttle (FLOW_MAX_WORKERS). Every unit
 of model work runs here. Budget is gated and the journal written around each.
 
 Tier 2 — orchestration pool: large + cheap. Runs the script's thunks / pipeline
@@ -29,14 +29,14 @@ from .leaves import LeafRequest, LeafResult, run_leaf
 
 
 def _default_leaf_workers() -> int:
-    env = os.environ.get("FLOWLEAF_MAX_WORKERS")
+    env = os.environ.get("FLOW_MAX_WORKERS")
     if env:
         return max(1, int(env))
     return min(32, (os.cpu_count() or 4) * 4)
 
 
 def _default_orch_workers() -> int:
-    env = os.environ.get("FLOWLEAF_ORCH_WORKERS")
+    env = os.environ.get("FLOW_ORCH_WORKERS")
     if env:
         return max(2, int(env))
     return 256
@@ -74,9 +74,9 @@ class Engine:
                 max_workers=self.max_workers, mp_context=mp.get_context("spawn"))
         else:
             self._leaf_pool = ThreadPoolExecutor(max_workers=self.max_workers,
-                                                 thread_name_prefix="flowleaf-leaf")
+                                                 thread_name_prefix="flow-leaf")
         self.orch_pool = ThreadPoolExecutor(max_workers=self.orch_workers,
-                                            thread_name_prefix="flowleaf-orch")
+                                            thread_name_prefix="flow-orch")
 
     # -- events ----------------------------------------------------------
     def _emit(self, record: dict) -> None:

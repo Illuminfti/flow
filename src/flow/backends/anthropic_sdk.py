@@ -20,7 +20,7 @@ class AnthropicBackend:
         try:
             import anthropic
         except ImportError:
-            raise BackendError("anthropic backend needs: pip install 'flowleaf[anthropic]'")
+            raise BackendError("anthropic backend needs: pip install 'flow[anthropic]'")
         try:
             client = anthropic.Anthropic(api_key=self.api_key, timeout=timeout or 60.0)
             msg = client.messages.create(

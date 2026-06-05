@@ -11,6 +11,6 @@ Initial public release.
 - Token + USD + calls budget with deadline propagation.
 - Backends: `openai_http` (stdlib default), `anthropic_sdk`, `shell_cmd` (any CLI), `local`; `register_backend()` hook.
 - Single YAML/JSON config with `${VAR}` interpolation and zero-config fallback.
-- `flowleaf` CLI: `run | resume | trace | author | list | doctor | init | self-test`.
-- Model-authored workflows via `flowleaf run --nl`.
+- `flow` CLI: `run | resume | trace | author | list | doctor | init | self-test`.
+- Model-authored workflows via `flow run --nl`.
 - Agent-driven setup (`AGENTS.md`).

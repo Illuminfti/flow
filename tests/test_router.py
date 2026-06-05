@@ -1,6 +1,6 @@
 import pytest
 
-from flowleaf import router
+from flow import router
 
 
 def test_denylist_blocks_light_models():
@@ -36,7 +36,7 @@ def test_explicit_pin():
 
 
 def test_allow_light_models_opt_out(monkeypatch):
-    from flowleaf import config
+    from flow import config
     cfg = config.get()
     cfg["leaf"]["allow_light_models"] = True
     config.set_config(cfg)

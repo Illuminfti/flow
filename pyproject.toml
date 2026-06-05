@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "flowleaf"
+name = "flow"
 version = "1.0.0"
 description = "A generic dynamic-workflow engine for any agent, any model — concurrent leaves, cost-aware routing, schema enforcement, crash-resume."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
-authors = [{ name = "flowleaf contributors" }]
+authors = [{ name = "flow contributors" }]
 keywords = ["llm", "agents", "workflow", "orchestration", "concurrency", "ai", "multi-agent"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -28,15 +28,15 @@ dev = ["pytest>=7", "pytest-cov", "ruff", "mypy", "PyYAML>=6"]
 all = ["PyYAML>=6", "anthropic>=0.40", "httpx>=0.27"]
 
 [project.urls]
-Homepage = "https://github.com/Illuminfti/flowleaf"
-Repository = "https://github.com/Illuminfti/flowleaf"
-Issues = "https://github.com/Illuminfti/flowleaf/issues"
+Homepage = "https://github.com/Illuminfti/flow"
+Repository = "https://github.com/Illuminfti/flow"
+Issues = "https://github.com/Illuminfti/flow/issues"
 
 [project.scripts]
-flowleaf = "flowleaf.cli:main"
+flow = "flow.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/flowleaf"]
+packages = ["src/flow"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,8 +1,8 @@
 """Path anchoring — XDG-compliant, no environment coupling.
 
 Run data lives under ``config.engine.data_dir`` if set, else
-``$XDG_DATA_HOME/flowleaf`` (default ``~/.local/share/flowleaf``), overridable
-with ``$FLOWLEAF_DATA_DIR``.
+``$XDG_DATA_HOME/flow`` (default ``~/.local/share/flow``), overridable
+with ``$FLOW_DATA_DIR``.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 def data_root() -> Path:
-    env = os.environ.get("FLOWLEAF_DATA_DIR")
+    env = os.environ.get("FLOW_DATA_DIR")
     if env:
         root = Path(env)
     else:
@@ -24,7 +24,7 @@ def data_root() -> Path:
             root = Path(cfg_dir)
         else:
             xdg = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-            root = Path(xdg) / "flowleaf"
+            root = Path(xdg) / "flow"
     root.mkdir(parents=True, exist_ok=True)
     return root
 

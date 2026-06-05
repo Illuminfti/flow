@@ -2,8 +2,8 @@
 
     python examples/custom_backend.py
 """
-from flowleaf import register_backend, run_workflow
-from flowleaf.backends.base import BackendResponse
+from flow import register_backend, run_workflow
+from flow.backends.base import BackendResponse
 
 
 def _build_my_backend(req, cfg, provider_cfg):

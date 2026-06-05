@@ -1,6 +1,6 @@
 """Fan out N questions concurrently, collect answers.
 
-    flowleaf run examples/simple_parallel.py --args '{"topics":["sui","solana","ethereum"]}'
+    flow run examples/simple_parallel.py --args '{"topics":["sui","solana","ethereum"]}'
 """
 
 

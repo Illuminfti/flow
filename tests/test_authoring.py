@@ -1,6 +1,6 @@
 import pytest
 
-from flowleaf import authoring
+from flow import authoring
 
 
 GOOD = '''

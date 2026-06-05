@@ -1,7 +1,7 @@
 """audit-hard — finder pool → adversarial refutation → ranked fixes.
 
 The real-model successor to the old stub's hardcoded template. Drive with:
-  flowleaf run flowleaf/templates/audit_hard.py --args '{"target":"path or topic",
+  flow run flow/templates/audit_hard.py --args '{"target":"path or topic",
       "lenses":["correctness","security","operations","taste"]}'
       --budget '{"max_usd":3,"max_tokens":400000}'
 """

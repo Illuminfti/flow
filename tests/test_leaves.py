@@ -1,8 +1,8 @@
 """Schema enforcement + token budget via a fake backend (no network)."""
 
-from flowleaf import leaves
-from flowleaf.backends.base import BackendResponse
-from flowleaf.runtime import run_workflow
+from flow import leaves
+from flow.backends.base import BackendResponse
+from flow.runtime import run_workflow
 
 SCHEMA = {"type": "object", "required": ["title", "severity"],
           "properties": {"title": {"type": "string"}, "severity": {"type": "string"}}}

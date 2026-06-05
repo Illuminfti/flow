@@ -1,4 +1,4 @@
-<h1 align="center">🍃 flowleaf</h1>
+<h1 align="center">🍃 flow</h1>
 
 <p align="center">
   <b>A dynamic-workflow engine for any agent, any model.</b><br>
@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Illuminfti/flowleaf/actions"><img src="https://github.com/Illuminfti/flowleaf/actions/workflows/tests.yml/badge.svg" alt="tests"></a>
+  <a href="https://github.com/Illuminfti/flow/actions"><img src="https://github.com/Illuminfti/flow/actions/workflows/tests.yml/badge.svg" alt="tests"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-blue" alt="python">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
   <img src="https://img.shields.io/badge/deps-stdlib%20core-orange" alt="deps">
@@ -15,7 +15,7 @@
 
 ---
 
-`flowleaf` is the [Claude-Code-Workflow](https://docs.claude.com/) pattern as a standalone library:
+`flow` is the [Claude-Code-Workflow](https://docs.claude.com/) pattern as a standalone library:
 your script (written by you, or authored by a model from a one-line task) expresses fan-out,
 pipelines, and verification; the engine runs the leaves across a real concurrency pool, picks the
 cheapest capable model per leaf, validates structured output, and writes a crash-resumable journal.
@@ -26,35 +26,35 @@ It is **model-agnostic** (any OpenAI-compatible API, Anthropic, Ollama/LM Studio
 ## Why
 
 - **True concurrency, no async** — leaves run on a real pool; `parallel()` overlaps wall-clock.
-- **Crash-resumable** — every leaf transition is an fsync'd WAL line; `flowleaf resume <run_id>` skips completed work.
+- **Crash-resumable** — every leaf transition is an fsync'd WAL line; `flow resume <run_id>` skips completed work.
 - **Cost-aware routing** — per-leaf tiers (`quality`/`cheap`/`free`/`local`) pick the cheapest capable model.
 - **Schema enforcement** — pass a JSON Schema; get validated output with one automatic repair turn.
-- **Model-authored workflows** — `flowleaf run --nl "audit X across 4 lenses"` writes and runs the script.
+- **Model-authored workflows** — `flow run --nl "audit X across 4 lenses"` writes and runs the script.
 - **Zero core deps** — the default backend is stdlib `urllib`. Extras add YAML/Anthropic/httpx.
 
 ## Install
 
 ```bash
-pipx install "git+https://github.com/Illuminfti/flowleaf"
-# or:  pip install "flowleaf[yaml,anthropic] @ git+https://github.com/Illuminfti/flowleaf"
-# or:  uv tool install "git+https://github.com/Illuminfti/flowleaf"
+pipx install "git+https://github.com/Illuminfti/flow"
+# or:  pip install "flow[yaml,anthropic] @ git+https://github.com/Illuminfti/flow"
+# or:  uv tool install "git+https://github.com/Illuminfti/flow"
 ```
 
-> PyPI release (`pipx install flowleaf`) coming soon; install from git for now.
+> PyPI release (`pipx install flow`) coming soon; install from git for now.
 
 ## 30-second quickstart
 
 ```bash
 export OPENAI_API_KEY=sk-...      # or any OpenAI-compatible key
-flowleaf init                     # writes ~/.config/flowleaf/config.yaml
-flowleaf self-test --offline      # proves the engine runs (no network)
-flowleaf run --nl "summarize the top 3 risks of running trading bots on one server"
+flow init                     # writes ~/.config/flow/config.yaml
+flow self-test --offline      # proves the engine runs (no network)
+flow run --nl "summarize the top 3 risks of running trading bots on one server"
 ```
 
 In Python:
 
 ```python
-from flowleaf import run_workflow
+from flow import run_workflow
 
 FINDING = {"type": "object", "required": ["title", "severity"],
            "properties": {"title": {"type": "string"}, "severity": {"type": "string"}}}
@@ -90,7 +90,7 @@ print(report["final"], report["spend"])
 
 ## Models & routing
 
-Everything is config (`~/.config/flowleaf/config.yaml`) — no code edits to add a model. Define
+Everything is config (`~/.config/flow/config.yaml`) — no code edits to add a model. Define
 `providers`, `models` (with pricing + capabilities), and `tiers`. The router filters by capability
 and picks minimum cost within the tier. A light-model denylist is on by default; opt out with
 `leaf.allow_light_models: true`. See [docs/config.md](docs/config.md).
@@ -104,9 +104,9 @@ and picks minimum cost within the tier. A light-model denylist is on by default;
 ## Crash & resume
 
 ```bash
-flowleaf run myflow.py --run-id audit-42      # crashes? kill it, then:
-flowleaf resume audit-42 myflow.py            # completed leaves are skipped
-flowleaf trace audit-42                        # per-leaf model / cost / latency
+flow run myflow.py --run-id audit-42      # crashes? kill it, then:
+flow resume audit-42 myflow.py            # completed leaves are skipped
+flow trace audit-42                        # per-leaf model / cost / latency
 ```
 
 ## For AI agents

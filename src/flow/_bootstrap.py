@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 _TEMPLATE = """\
-# flowleaf config — https://github.com/Illuminfti/flowleaf
+# flow config — https://github.com/Illuminfti/flow
 # Models work with ZERO code edits. Set the api_key_env vars in your shell.
 engine:
   executor: thread
@@ -39,10 +39,10 @@ defaults:
 
 
 def config_path() -> Path:
-    if os.environ.get("FLOWLEAF_CONFIG"):
-        return Path(os.environ["FLOWLEAF_CONFIG"])
+    if os.environ.get("FLOW_CONFIG"):
+        return Path(os.environ["FLOW_CONFIG"])
     xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(xdg) / "flowleaf" / "config.yaml"
+    return Path(xdg) / "flow" / "config.yaml"
 
 
 def cmd_init(force: bool = False) -> int:
@@ -55,7 +55,7 @@ def cmd_init(force: bool = False) -> int:
         print(f"wrote {p}")
     keys = [k for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY") if os.environ.get(k)]
     print(f"detected API keys in env: {keys or 'none — export at least one, or run a local model via ollama'}")
-    print("next: flowleaf self-test --offline")
+    print("next: flow self-test --offline")
     return 0
 
 
@@ -63,7 +63,7 @@ def cmd_self_test(online: bool = False, as_json: bool = False) -> int:
     result = {"offline": {}, "online": {}}
     # offline: imports + config parse + local DAG, zero network
     try:
-        import flowleaf  # noqa
+        import flow  # noqa
         from . import config
         from .paths import data_root
         cfg = config.get(reload=True)

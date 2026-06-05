@@ -1,4 +1,4 @@
-"""flowleaf — a generic dynamic-workflow engine for any agent, any model.
+"""flow — a generic dynamic-workflow engine for any agent, any model.
 
 Code owns orchestration; models do bounded leaf work that runs concurrently,
 routes by cost, enforces JSON schemas (with one repair turn), and resumes after

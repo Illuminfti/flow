@@ -23,7 +23,7 @@ ALLOWED_IMPORTS = {
 }
 
 _API_CONTRACT = '''\
-You write Python workflow scripts for the flowleaf engine.
+You write Python workflow scripts for the flow engine.
 
 A script defines exactly one function:
 
@@ -139,7 +139,7 @@ def dry_run(script_text: str, args=None) -> dict:
         f.write(script_text)
         path = f.name
     mod = _load_script(path)
-    rd = Path(tempfile.mkdtemp(prefix="flowleaf-dry-"))
+    rd = Path(tempfile.mkdtemp(prefix="flow-dry-"))
     engine = Engine(run_dir=rd, budget=Budget(max_calls=2000))
 
     class DryWorkflow(Workflow):

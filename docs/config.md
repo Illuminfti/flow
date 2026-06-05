@@ -1,15 +1,15 @@
 # Configuration
 
-flowleaf reads one config file so it works with **any models, zero code edits**.
+flow reads one config file so it works with **any models, zero code edits**.
 
 ## Where it looks (first match wins)
 
-1. `$FLOWLEAF_CONFIG`
-2. `./.flowleaf.yaml`
-3. `$XDG_CONFIG_HOME/flowleaf/config.yaml` (default `~/.config/flowleaf/config.yaml`)
+1. `$FLOW_CONFIG`
+2. `./.flow.yaml`
+3. `$XDG_CONFIG_HOME/flow/config.yaml` (default `~/.config/flow/config.yaml`)
 4. **zero-config** — if `OPENAI_API_KEY` is set, a one-model `quality` setup is synthesised.
 
-`flowleaf init` writes a starter file. YAML needs the `[yaml]` extra; `.json` works with no extras.
+`flow init` writes a starter file. YAML needs the `[yaml]` extra; `.json` works with no extras.
 
 ## Schema
 
@@ -18,7 +18,7 @@ engine:
   executor: thread # thread | process
   max_workers: null # null -> min(32, 4*cpu)
   orch_workers: null # null -> 256
-  data_dir: null # null -> $XDG_DATA_HOME/flowleaf
+  data_dir: null # null -> $XDG_DATA_HOME/flow
   budget:
     { max_tokens: null, max_usd: null, max_calls: 1000, deadline_seconds: null }
 
@@ -101,7 +101,7 @@ defaults:
 ## Notes
 
 - `${VAR}` and `${VAR:-default}` interpolate environment variables (one level). Keep secrets in env,
-  reference them via `auth_env` — flowleaf never stores or prints key values.
+  reference them via `auth_env` — flow never stores or prints key values.
 - The router filters a tier's models by required `caps` (a `schema=` leaf needs `structured`; vision
   needs `vision`) and picks the **minimum estimated cost**.
 - Pin per leaf: `wf.agent(..., model="deepseek-v3")` or `provider="..."`. Pins are still denylist-checked.

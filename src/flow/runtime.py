@@ -1,7 +1,7 @@
 """The script-authoring API — what a workflow script calls.
 
 A script is a Python module exposing ``run(wf, args)`` (and optional ``META``).
-``wf`` is a :class:`Workflow` bound to an :class:`~flowleaf.scheduler.Engine`.
+``wf`` is a :class:`Workflow` bound to an :class:`~flow.scheduler.Engine`.
 
     def run(wf, args):
         wf.phase("scan")
@@ -186,7 +186,7 @@ def run_workflow(
     args: Any = None,
     budget: Optional[dict] = None,
     run_id: Optional[str] = None,
-    slug: str = "flowleaf",
+    slug: str = "flow",
     executor_kind: str = "thread",
     max_workers: Optional[int] = None,
     on_event: Optional[Callable[[dict], None]] = None,

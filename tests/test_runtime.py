@@ -1,6 +1,6 @@
 import time
 
-from flowleaf.runtime import run_workflow
+from flow.runtime import run_workflow
 
 
 def _sleep_then(val, secs=0.3):

@@ -1,9 +1,9 @@
-from flowleaf.backends import build_backend
-from flowleaf.backends.local import LocalBackend
-from flowleaf.backends.openai_http import OpenAIHTTPBackend
-from flowleaf.backends.shell_cmd import ShellCmdBackend
-from flowleaf.leaves import LeafRequest
-from flowleaf.router import choose
+from flow.backends import build_backend
+from flow.backends.local import LocalBackend
+from flow.backends.openai_http import OpenAIHTTPBackend
+from flow.backends.shell_cmd import ShellCmdBackend
+from flow.leaves import LeafRequest
+from flow.router import choose
 
 
 def test_local_backend_preserves_native():

@@ -1,9 +1,9 @@
-"""Configuration — makes flowleaf work with ANY models on ANY box, zero code edits.
+"""Configuration — makes flow work with ANY models on ANY box, zero code edits.
 
 Load precedence:
-  1. $FLOWLEAF_CONFIG
-  2. ./.flowleaf.yaml
-  3. $XDG_CONFIG_HOME/flowleaf/config.yaml  (default ~/.config/flowleaf/config.yaml)
+  1. $FLOW_CONFIG
+  2. ./.flow.yaml
+  3. $XDG_CONFIG_HOME/flow/config.yaml  (default ~/.config/flow/config.yaml)
   4. zero-config: if OPENAI_API_KEY is set, synthesise a one-model "quality" setup.
 
 ``${VAR}`` / ``${VAR:-default}`` interpolation (one level) lets you reference env
@@ -72,11 +72,11 @@ def _deep_merge(base: dict, over: dict) -> dict:
 
 def _candidate_paths() -> list[Path]:
     paths = []
-    if os.environ.get("FLOWLEAF_CONFIG"):
-        paths.append(Path(os.environ["FLOWLEAF_CONFIG"]))
-    paths.append(Path.cwd() / ".flowleaf.yaml")
+    if os.environ.get("FLOW_CONFIG"):
+        paths.append(Path(os.environ["FLOW_CONFIG"]))
+    paths.append(Path.cwd() / ".flow.yaml")
     xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    paths.append(Path(xdg) / "flowleaf" / "config.yaml")
+    paths.append(Path(xdg) / "flow" / "config.yaml")
     return paths
 
 
@@ -85,7 +85,7 @@ def _zero_config() -> Optional[dict]:
     Never auto-selects a light model."""
     if not os.environ.get("OPENAI_API_KEY"):
         return None
-    model = os.environ.get("FLOWLEAF_DEFAULT_MODEL", "gpt-4o")
+    model = os.environ.get("FLOW_DEFAULT_MODEL", "gpt-4o")
     return {
         "providers": {"openai": {"kind": "openai_http", "base_url": "https://api.openai.com/v1", "auth_env": "OPENAI_API_KEY"}},
         "models": {model: {"provider": "openai", "id": model, "in": 2.5, "out": 10.0, "free": False,
@@ -99,8 +99,8 @@ def _load_yaml(path: Path) -> dict:
         import yaml  # optional extra
     except ImportError:
         raise ConfigError(
-            f"{path} is YAML but PyYAML is not installed. Run: pip install 'flowleaf[yaml]' "
-            f"(or set FLOWLEAF_CONFIG to a .json file)."
+            f"{path} is YAML but PyYAML is not installed. Run: pip install 'flow[yaml]' "
+            f"(or set FLOW_CONFIG to a .json file)."
         )
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}

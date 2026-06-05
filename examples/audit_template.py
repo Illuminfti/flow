@@ -1,6 +1,6 @@
 """Finder pool -> adversarial verify -> rank. The canonical review workflow.
 
-    flowleaf run examples/audit_template.py \
+    flow run examples/audit_template.py \
       --args '{"target":"./src","lenses":["correctness","security","performance"]}' \
       --budget '{"max_usd":2}'
 """

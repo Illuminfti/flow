@@ -1,4 +1,4 @@
-from flowleaf import schema
+from flow import schema
 
 
 SCHEMA = {

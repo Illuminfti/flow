@@ -3,7 +3,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from flowleaf.runtime import run_workflow
+from flow.runtime import run_workflow
 from tests import _crash_helpers as ch
 
 
@@ -23,7 +23,7 @@ def test_hard_crash_then_resume(tmp_path, monkeypatch):
     pre = Counter(int(x) for x in sentinel.read_text().split())
     assert pre[0] == 1 and pre[1] == 1 and pre[2] == 1 and 3 not in pre
 
-    monkeypatch.setenv("FLOWLEAF_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("FLOW_DATA_DIR", str(data_dir))
     rep = run_workflow(run_fn=ch.build_run(str(sentinel), 2, str(marker)),
                        run_id=ch.RUN_ID, script_id=ch.SCRIPT_ID, slug="crash", max_workers=1)
     assert rep["status"] == "completed"

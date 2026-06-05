@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""flowleaf CLI — run | resume | trace | author | list | doctor | init | self-test."""
+"""flow CLI — run | resume | trace | author | list | doctor | init | self-test."""
 from __future__ import annotations
 
 import argparse
@@ -21,9 +21,9 @@ def _cmd_run(a) -> int:
     script_path = a.script
     if a.nl:
         from . import authoring
-        print(f"[flowleaf] authoring script via model for: {a.nl}", file=sys.stderr)
+        print(f"[flow] authoring script via model for: {a.nl}", file=sys.stderr)
         script_path = authoring.author_and_save(a.nl, a.out)
-        print(f"[flowleaf] authored -> {script_path}", file=sys.stderr)
+        print(f"[flow] authored -> {script_path}", file=sys.stderr)
     if not script_path:
         print("error: provide a script path or --nl", file=sys.stderr)
         return 2
@@ -107,8 +107,8 @@ def _cmd_selftest(a) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="flowleaf", description="Generic dynamic-workflow engine for any agent, any model")
-    p.add_argument("--version", action="version", version=f"flowleaf {__version__}")
+    p = argparse.ArgumentParser(prog="flow", description="Generic dynamic-workflow engine for any agent, any model")
+    p.add_argument("--version", action="version", version=f"flow {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("run", help="run a workflow script (or --nl to author then run)")

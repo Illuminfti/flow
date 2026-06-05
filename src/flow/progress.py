@@ -33,12 +33,12 @@ def make_relay(*, run_id: str, notify_fn: Optional[Callable[[str, str], None]] =
             state["completed"] += 1
         now = time.time()
         if ev == "phase":
-            emit(f"flowleaf {run_id}", f"phase: {rec.get('phase')}")
+            emit(f"flow {run_id}", f"phase: {rec.get('phase')}")
         elif rec.get("notify"):
-            emit(f"flowleaf {run_id}", rec.get("message", ""))
+            emit(f"flow {run_id}", rec.get("message", ""))
         elif ev == "completed" and now - state["last"] > debounce_s:
             state["last"] = now
-            emit(f"flowleaf {run_id}", f"{state['completed']} leaves done")
+            emit(f"flow {run_id}", f"{state['completed']} leaves done")
 
     return hook
 

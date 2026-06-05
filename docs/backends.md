@@ -23,8 +23,8 @@ cmd_template: ["hermes","chat","--provider","openai-codex","-m","{model}","--ign
 ## Custom backends
 
 ```python
-from flowleaf import register_backend
-from flowleaf.backends.base import BackendResponse
+from flow import register_backend
+from flow.backends.base import BackendResponse
 
 def build(req, cfg, provider_cfg):
     def backend(prompt, *, timeout=None):
@@ -37,7 +37,7 @@ register_backend("my_kind", build)
 ```
 
 Then point a provider at it: `providers: {mine: {kind: my_kind}}` and add a model under it. This is how
-a host agent (e.g. Hermes, Claude Code) exposes its own in-process model loop as a flowleaf backend.
+a host agent (e.g. Hermes, Claude Code) exposes its own in-process model loop as a flow backend.
 
 ## BackendResponse
 
@@ -46,4 +46,4 @@ BackendResponse(text, input_tokens, output_tokens, usd=0.0, tokens_estimated=Fal
                 provider="", model="", native=None)
 ```
 
-Raise `flowleaf.BackendError` for failures — the scheduler turns it into a failed leaf, never a crash.
+Raise `flow.BackendError` for failures — the scheduler turns it into a failed leaf, never a crash.
