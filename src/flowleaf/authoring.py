@@ -1,0 +1,163 @@
+"""NL -> workflow script, authored by a model via the configured backend.
+
+The model writes a Python script using only the ``wf.*`` API. Output is
+validated before it runs: AST parse, stdlib-only import allowlist, and a
+``local``-only dry run that verifies the DAG shape with zero model calls.
+"""
+from __future__ import annotations
+
+import ast
+import re
+import tempfile
+from pathlib import Path
+from typing import Callable, Optional
+
+from . import router as _router
+from .backends import build_backend
+from .leaves import LeafRequest
+from .paths import data_root
+
+ALLOWED_IMPORTS = {
+    "json", "re", "math", "statistics", "itertools", "functools",
+    "collections", "datetime", "textwrap", "random", "string",
+}
+
+_API_CONTRACT = '''\
+You write Python workflow scripts for the flowleaf engine.
+
+A script defines exactly one function:
+
+    def run(wf, args):
+        ...
+        return <final_result>
+
+`wf` is the runtime. `args` is caller-provided input (may be None). Use ONLY
+these wf methods — do not import the engine, import nothing except Python stdlib:
+
+  wf.phase(name)
+  wf.agent(prompt, *, label=None, schema=None, tier="quality"|"cheap"|"free"|"local",
+           required=True) -> result          # one bounded model leaf
+  wf.parallel([thunk, ...]) -> [results]      # thunks run CONCURRENTLY
+  wf.pipeline(items, stage1, stage2, ...) -> [results]
+  wf.workflow(child_fn, inputs, label=...) -> result   # nested
+  wf.local(fn, *args) -> result               # deterministic no-model leaf
+  wf.log(msg); wf.spend(); wf.remaining(); wf.has_headroom()
+
+Concurrency: build a LIST of zero-arg lambdas, pass to wf.parallel. Bind loop
+vars with defaults: `lambda d=d: wf.agent(...)`. schema = a JSON Schema dict ->
+structured output.
+
+Output ONLY the Python code in a single ```python fenced block. No prose.
+'''
+
+_FEWSHOT = '''\
+Example — "review files for bugs across 3 lenses, verify each":
+
+```python
+FINDING = {"type": "object", "required": ["title", "severity"],
+           "properties": {"title": {"type": "string"}, "severity": {"type": "string"}}}
+
+def run(wf, args):
+    files = args["files"]
+    wf.phase("review")
+    found = wf.parallel([
+        (lambda lens=lens: wf.agent(f"Review {files} for {lens} bugs. Worst one only.",
+                                    label=f"review:{lens}", schema=FINDING))
+        for lens in ["correctness", "security", "performance"]])
+    findings = [f for f in found if f]
+    wf.phase("verify")
+    verdicts = wf.parallel([
+        (lambda f=f: wf.agent(f"Refute if false: {f}", label="verify", tier="cheap", required=False))
+        for f in findings])
+    return {"findings": findings, "verdicts": verdicts}
+```
+'''
+
+_FENCE = re.compile(r"```(?:python)?\s*(.*?)```", re.DOTALL)
+
+
+class AuthoringError(RuntimeError):
+    pass
+
+
+def _extract_code(text: str) -> str:
+    m = _FENCE.search(text or "")
+    code = m.group(1).strip() if m else (text or "").strip()
+    if not code:
+        raise AuthoringError("model returned no code")
+    return code
+
+
+def validate(script_text: str) -> None:
+    try:
+        tree = ast.parse(script_text)
+    except SyntaxError as exc:
+        raise AuthoringError(f"syntax error: {exc}")
+    has_run = False
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            mods = ([a.name.split(".")[0] for a in node.names] if isinstance(node, ast.Import)
+                    else [(node.module or "").split(".")[0]])
+            for m in mods:
+                if m and m not in ALLOWED_IMPORTS:
+                    raise AuthoringError(f"disallowed import: {m} (stdlib allowlist only)")
+        if isinstance(node, ast.FunctionDef) and node.name == "run":
+            has_run = True
+    if not has_run:
+        raise AuthoringError("script must define run(wf, args)")
+
+
+def dry_run(script_text: str, args=None) -> dict:
+    """Load + execute with every leaf forced to the local backend (no model
+    calls) to verify the DAG shape before a real run."""
+    from .budget import Budget
+    from .runtime import Workflow, _load_script
+    from .scheduler import Engine
+
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+        f.write(script_text)
+        path = f.name
+    mod = _load_script(path)
+    rd = Path(tempfile.mkdtemp(prefix="flowleaf-dry-"))
+    engine = Engine(run_dir=rd, budget=Budget(max_calls=2000))
+
+    class DryWorkflow(Workflow):
+        def agent(self, prompt, **kw):
+            return self.local(lambda: f"<dry:{kw.get('label', 'agent')}>", label=kw.get("label"))
+
+    wf = DryWorkflow(engine, script_id="dry")
+    try:
+        mod.run(wf, args)
+    finally:
+        engine.shutdown()
+    return {"ok": True, "leaf_count": engine.report()["leaf_count"]}
+
+
+def _one_shot(prompt: str, *, tier: Optional[str], timeout: float) -> str:
+    route = _router.choose(tier=tier)
+    req = LeafRequest(leaf_id="author", label="author", phase="author", prompt=prompt,
+                      route=route, timeout=timeout)
+    backend = build_backend(req)
+    return backend(prompt, timeout=timeout).text
+
+
+def author(nl_task: str, *, tier: Optional[str] = None, timeout: int = 180,
+           chat_fn: Optional[Callable[[str], str]] = None) -> str:
+    """NL -> validated script. Uses the configured backend (or an injected
+    ``chat_fn`` for hosts that want to supply their own model call)."""
+    prompt = f"{_API_CONTRACT}\n{_FEWSHOT}\nNow write run(wf, args) for this task:\n{nl_task}"
+    out = chat_fn(prompt) if chat_fn else _one_shot(prompt, tier=tier, timeout=timeout)
+    code = _extract_code(out)
+    validate(code)
+    return code
+
+
+def author_and_save(nl_task: str, out_path: Optional[str] = None, **kw) -> str:
+    code = author(nl_task, **kw)
+    if out_path is None:
+        from .ids import stable_hash
+        d = data_root() / "authored"
+        d.mkdir(parents=True, exist_ok=True)
+        out_path = str(d / f"wf-{stable_hash(nl_task, 8)}.py")
+    Path(out_path).write_text(code, encoding="utf-8")
+    return out_path
