@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 — 8+ upgrades (deep audit follow-through, 2026-06-05)
+
+- **Cancellation + deadline cascade:** Ctrl+C/SIGTERM cancels cooperatively; a deadline breach stops the whole fleet; `wf.cancelled()`; cancelled leaves re-run on resume (they're unfinished work, not skipped).
+- **Explicit failure modes:** `wf.parallel(..., mode=...)` / `wf.pipeline(..., mode=...)` — `lenient` (default, `None`+warn), `fail_fast` (raise `ParallelError`), `collect_errors` (`ExecutionResult` envelopes).
+- **Inspectable resume state:** `flow status <run_id>` (+ `--json`) shows the node-state manifest and exactly what `resume` would re-run, with estimated rerun cost.
+- **First-class tools:** `register_tool(ToolDefinition(...))` + `wf.agent(tools=[...], tool_approval_gates={...})` — a bounded tool-use loop in the openai_http backend with per-leaf grants and approval gates; budgeted.
+- **Cross-run content cache (opt-in):** `leaf.content_cache.enabled` reuses identical leaves across runs/machines by content hash.
+- **Cost prediction:** `flow run --dry-run --estimate-cost` forecasts spend per leaf with zero model calls.
+- **Live + kill-resume CI:** external-SIGKILL-then-resume smoke (no creds) + credential-gated live provider tests (`pytest -m live`); fixed httpx HTTP-status classification (402/429 no longer mis-marked retryable).
+
 ## 1.0.1 — audit fixes (Albedo dogfood audits ×2, 2026-06-05)
 
 Re-audit round (score 4.0 → 7.4):

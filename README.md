@@ -56,7 +56,13 @@ flowchart LR
 | Per-leaf **cost-aware** routing     |             ✅ tiers pick cheapest capable              |        ❌ one tier         |
 | Crash-resume across processes       |              ✅ fsync'd WAL, `flow resume`              |    ⚠️ same-session only    |
 | Transient-error **retry + backoff** |                       ✅ built-in                       |             ❌             |
-| Schema output + auto-repair         |              ✅ + budget-gated repair turn              |             ✅             |
+| Schema output + auto-repair         |       ✅ real JSON Schema (`jsonschema`) + repair       |             ✅             |
+| Cancellation + deadline cascade     |      ✅ Ctrl+C/SIGTERM/deadline, `wf.cancelled()`       |             ✅             |
+| First-class tools + approval gates  |   ✅ typed tools, per-leaf grants, approval callback    |       ✅ (built-in)        |
+| Cost prediction (dry-run)           |             ✅ `--dry-run --estimate-cost`              |             ❌             |
+| Subscriptions / OAuth (no API key)  |   ✅ Codex (ChatGPT Pro), Claude Max, any token file    |             —              |
+| Cross-run result cache              |              ✅ opt-in, content-addressed               |             ❌             |
+| Inspectable resume state            |             ✅ `flow status` + resume plan              |             ❌             |
 | True concurrency, no async          |                    ✅ two-tier pools                    |        ✅ (~16 cap)        |
 | Dependencies                        |                 **0** (stdlib `urllib`)                 |            n/a             |
 | License                             |                   MIT, yours to fork                    |        proprietary         |
@@ -105,18 +111,23 @@ report = run_workflow(run_fn=run, args={"files": ["app.py"]}, budget={"max_usd":
 print(report["final"], report["spend"])
 ```
 
-## The `wf` API — nine methods, that's the whole thing
+## The `wf` API — small on purpose
 
 ```python
-wf.agent(prompt, *, label, schema, tier, model, provider, required, max_tokens, timeout)  # one model leaf
-wf.local(fn, *args, **kwargs)            # a deterministic no-model leaf (real Python)
-wf.parallel([thunk, ...])                # run thunks concurrently
-wf.pipeline(items, *stages)              # streaming fan-out through stages
-wf.workflow(child_fn, inputs)            # nested workflow, shared pool, no depth cap
-wf.phase(name)                           # checkpoint
-wf.log(msg, **fields) / wf.notify(msg)   # journal / escalate
-wf.spend() / wf.remaining() / wf.has_headroom()   # token + usd + calls budget
+wf.agent(prompt, *, label, schema, tier, model, provider, required, max_tokens, timeout,
+         tools=[...], tool_approval_gates={...})   # one model leaf (with optional tool-use loop)
+wf.local(fn, *args, **kwargs)                      # a deterministic no-model leaf (real Python)
+wf.parallel([thunk, ...], mode="lenient"|"fail_fast"|"collect_errors")   # run thunks concurrently
+wf.pipeline(items, *stages, mode=...)              # streaming fan-out through stages
+wf.workflow(child_fn, inputs)                      # nested workflow, shared pool, no depth cap
+wf.phase(name)                                     # checkpoint
+wf.log(msg, **fields) / wf.notify(msg)             # journal / escalate
+wf.spend() / wf.remaining() / wf.has_headroom() / wf.cancelled()   # budget + cancellation
 ```
+
+Tools are first-class: `register_tool(ToolDefinition(name, description, parameters, handler, approval))`,
+then grant per leaf with `wf.agent(..., tools=["my_tool"])`. The model runs a bounded tool-use loop;
+side-effecting tools can require an approval callback.
 
 ## Models & routing
 
