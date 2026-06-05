@@ -81,8 +81,9 @@ def run_leaf(req: LeafRequest) -> LeafResult:
 
     kw = {}
     if req.tools:
-        if backend_kind != "openai_http":
-            return _fail(req, f"tools require an openai_http backend, got {backend_kind!r}", started)
+        if backend_kind not in ("openai_http", "anthropic_sdk"):
+            return _fail(req, f"tools require an openai_http or anthropic_sdk backend, "
+                              f"got {backend_kind!r}", started)
         kw = {"tools": req.tools, "approval_gates": req.tool_approval_gates}
 
     def model_call(text_prompt: str) -> BackendResponse:

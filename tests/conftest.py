@@ -15,6 +15,7 @@ TEST_CONFIG = {
     "providers": {
         "test": {"kind": "openai_http", "base_url": "http://localhost:0/v1", "auth_env": "TEST_KEY"},
         "sh": {"kind": "shell_cmd", "cmd_template": ["echo", "{prompt}"]},
+        "anthropic": {"kind": "anthropic_sdk", "auth_env": "ANTHROPIC_API_KEY"},
     },
     "models": {
         "big": {"provider": "test", "id": "big-model", "in": 1.0, "out": 2.0, "free": False,
@@ -23,6 +24,8 @@ TEST_CONFIG = {
                    "caps": ["tool_call", "structured"]},
         "freebie": {"provider": "test", "id": "free-model", "in": 0.0, "out": 0.0, "free": True,
                     "caps": ["tool_call", "structured", "vision"]},
+        "claude": {"provider": "anthropic", "id": "claude-test", "in": 3.0, "out": 15.0, "free": False,
+                   "caps": ["reasoning", "tool_call", "structured"]},
     },
     "tiers": {"quality": ["big"], "cheap": ["cheapo", "big"], "free": ["freebie"], "local": []},
     "defaults": {"tier": "quality", "backend": "openai_http"},

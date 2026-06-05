@@ -13,7 +13,7 @@ from .router import RouterError, choose
 from .runtime import ExecutionResult, FailureMode, ParallelError, Workflow, run_workflow
 from .tools import ToolDefinition, register_tool
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "Workflow",

@@ -64,12 +64,14 @@ def _build_codex(req, cfg, prov) -> Backend:
 
 
 def _build_anthropic(req, cfg, prov) -> Backend:
+    leaf = cfg.get("leaf") or {}
     return AnthropicBackend(
         api_key=_config.api_key_for(prov),
         model=req.route.model,
         provider=req.route.provider,
         max_tokens=req.max_tokens or 4096,
         pricing=req.route.pricing,
+        max_tool_iterations=int(leaf.get("max_tool_iterations", 8)),
     )
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0 — native Anthropic tools (8.5 → 9 follow-through, 2026-06-05)
+
+- **First-class tools on the `anthropic_sdk` backend**, at full parity with `openai_http`:
+  the Claude Messages `tool_use`/`tool_result` loop with per-leaf grants, approval-gate
+  overrides, the `max_tool_iterations` cap (fails closed, never infinite), and accumulated
+  token/usd accounting across turns. `to_anthropic_schema()` emits the `{name, description,
+input_schema}` tool shape; unknown tools come back as an `is_error` tool_result so the model
+  can recover instead of crashing. Using Claude with tools no longer requires an OpenAI-compatible
+  proxy. The fail-closed gate now allows `openai_http` **or** `anthropic_sdk`; other backends
+  (`shell_cmd`, `codex`) still reject tool grants with a clear error.
+- **Hermetic tests** (`tests/test_tools_anthropic.py`, 5): a fake `anthropic` module injected via
+  `sys.modules` — no SDK install, no network — covering execute / cap / approval-denied / unknown-tool
+  recovery / schema shape. The shared test config gained an `anthropic_sdk` provider + `claude` model.
+
 ## 1.1.0 — 8+ upgrades (deep audit follow-through, 2026-06-05)
 
 - **Cancellation + deadline cascade:** Ctrl+C/SIGTERM cancels cooperatively; a deadline breach stops the whole fleet; `wf.cancelled()`; cancelled leaves re-run on resume (they're unfinished work, not skipped).

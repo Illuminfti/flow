@@ -58,3 +58,14 @@ def to_openai_schema(names: list[str]) -> list[dict]:
         out.append({"type": "function",
                     "function": {"name": d.name, "description": d.description, "parameters": d.parameters}})
     return out
+
+
+def to_anthropic_schema(names: list[str]) -> list[dict]:
+    """Anthropic Messages API tool shape: ``{name, description, input_schema}``."""
+    out = []
+    for n in names:
+        d = _REGISTRY.get(n)
+        if d is None:
+            raise BackendError(f"unknown tool {n!r}; register it with register_tool()")
+        out.append({"name": d.name, "description": d.description, "input_schema": d.parameters})
+    return out

@@ -8,7 +8,7 @@ router, schema repair) is backend-agnostic, so adding a model provider = adding 
 | kind            | use                                                                                                                                                                                  | config                 |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- |
 | `openai_http`   | **default**. Any OpenAI-compatible `/chat/completions` (OpenAI, DeepSeek, Groq, Together, Mistral, OpenRouter, Ollama, LM Studio, vLLM). Stdlib `urllib`; uses `httpx` if installed. | `base_url`, `auth_env` |
-| `anthropic_sdk` | Anthropic Messages API. Needs `[anthropic]`.                                                                                                                                         | `auth_env`             |
+| `anthropic_sdk` | Anthropic Messages API. Needs `[anthropic]`. **Native first-class tools** (`tool_use`/`tool_result` loop, per-leaf grants + approval gates + iteration cap), same as `openai_http`.  | `auth_env`             |
 | `shell_cmd`     | Drive any CLI. `cmd_template` is an argv **list** with `{prompt}`/`{model}`/`{provider}`/`{toolsets}` placeholders, run with `shell=False` (no injection).                           | `cmd_template`         |
 | `local`         | A deterministic Python callable (`wf.local`). No model.                                                                                                                              | —                      |
 
