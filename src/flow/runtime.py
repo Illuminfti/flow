@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import contextvars
 import importlib.util
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -28,6 +30,28 @@ from .ids import new_run_id, stable_hash
 from .leaves import LeafRequest
 from .paths import run_dir_for
 from .scheduler import Engine
+
+
+class FailureMode(str, Enum):
+    LENIENT = "lenient"          # failed item -> None + warning (default, back-compat)
+    FAIL_FAST = "fail_fast"      # raise ParallelError on first failure, cancel the rest
+    COLLECT_ERRORS = "collect_errors"  # return an ExecutionResult envelope per item
+
+
+@dataclass
+class ExecutionResult:
+    ok: bool
+    value: Any
+    error: Optional[str] = None
+    index: int = -1
+
+
+class ParallelError(RuntimeError):
+    def __init__(self, index: int, cause: BaseException):
+        super().__init__(f"item {index} failed: {cause}")
+        self.index = index
+        self.cause = cause
+
 
 # Context-scoped current phase (see Workflow._phase) — concurrency-safe labelling.
 _CURRENT_PHASE: contextvars.ContextVar[str] = contextvars.ContextVar("flow_phase", default="init")
@@ -68,6 +92,11 @@ class Workflow:
 
     def has_headroom(self, min_tokens: int = 1000) -> bool:
         return self._engine.budget.has_headroom(min_tokens=min_tokens)
+
+    def cancelled(self) -> bool:
+        """True once the run is cancelled (Ctrl+C / SIGTERM / deadline breach).
+        Scripts can check this to return a partial result gracefully."""
+        return self._engine._cancel.is_set()
 
     # -- leaves ----------------------------------------------------------
     def agent(
@@ -146,18 +175,38 @@ class Workflow:
             return fn(*a, **k)
         return runner
 
-    def parallel(self, thunks: list[Callable[[], Any]]) -> list[Any]:
-        futures = [self._engine.orch_pool.submit(self._bind_phase(t)) for t in thunks]
-        out = []
-        for f in futures:
+    def _harvest(self, futures: list, mode: str) -> list[Any]:
+        """Collect futures with the chosen failure mode + cancellation.
+
+        mode: "lenient" (failed -> None + warn, default), "fail_fast" (raise
+        ParallelError, cancel the rest), "collect_errors" (ExecutionResult envelopes).
+        """
+        out: list[Any] = []
+        for idx, f in enumerate(futures):
+            if self._engine._cancel.is_set():
+                for p in futures[idx:]:
+                    p.cancel()
+                break
             try:
-                out.append(f.result())
+                r = f.result()
+                out.append(ExecutionResult(True, r, None, idx) if mode == "collect_errors" else r)
             except Exception as exc:
-                self.log(f"parallel thunk failed: {exc}", level="warn")
-                out.append(None)
+                if mode == "fail_fast":
+                    for p in futures[idx + 1:]:
+                        p.cancel()
+                    raise ParallelError(idx, exc) from exc
+                if mode == "collect_errors":
+                    out.append(ExecutionResult(False, None, str(exc), idx))
+                else:
+                    self.log(f"item {idx} failed: {exc}", level="warn")
+                    out.append(None)
         return out
 
-    def pipeline(self, items: list[Any], *stages: Callable[..., Any]) -> list[Any]:
+    def parallel(self, thunks: list[Callable[[], Any]], *, mode: str = "lenient") -> list[Any]:
+        futures = [self._engine.orch_pool.submit(self._bind_phase(t)) for t in thunks]
+        return self._harvest(futures, mode)
+
+    def pipeline(self, items: list[Any], *stages: Callable[..., Any], mode: str = "lenient") -> list[Any]:
         def run_item(item, idx):
             cur = item
             for stage in stages:
@@ -168,14 +217,7 @@ class Workflow:
 
         futures = [self._engine.orch_pool.submit(self._bind_phase(run_item), it, i)
                    for i, it in enumerate(items)]
-        out = []
-        for f in futures:
-            try:
-                out.append(f.result())
-            except Exception as exc:
-                self.log(f"pipeline item failed: {exc}", level="warn")
-                out.append(None)
-        return out
+        return self._harvest(futures, mode)
 
     def workflow(self, fn: Callable[["Workflow", Any], Any], inputs: Any = None,
                  *, label: str = "nested") -> Any:
@@ -242,12 +284,26 @@ def run_workflow(
     status = "completed"
     final = None
     error = None
+    # Ctrl+C / SIGTERM → cancel the run (cooperative). Off-main-thread (pytest,
+    # nested) signal.signal raises ValueError — guard and skip, never crash.
+    import signal
+    _prev = {}
+    for _s in (signal.SIGINT, signal.SIGTERM):
+        try:
+            _prev[_s] = signal.signal(_s, lambda *_a: engine._cancel.set())
+        except (ValueError, OSError):
+            pass
     try:
         final = run_fn(wf, args)
     except Exception as exc:
         status = "failed"
         error = str(exc)
     finally:
+        for _s, _h in _prev.items():
+            try:
+                signal.signal(_s, _h)
+            except (ValueError, OSError):
+                pass
         engine.shutdown()
     report = engine.report(final=final, status=status)
     if error:

@@ -66,6 +66,7 @@ class Engine:
         self._all: list[dict] = []
         self._all_lock = threading.Lock()
         self.resumed_count = len(self._cache)
+        self._cancel = threading.Event()  # set by Ctrl+C / SIGTERM / deadline cascade
 
         if executor_kind == "process":
             # spawn, not fork: forking a multi-threaded parent (we hold thread
@@ -111,6 +112,19 @@ class Engine:
             self._record(res, cached_hit=True)
             return res
 
+        # Cancellation: stop spending the moment the run is cancelled (Ctrl+C,
+        # deadline cascade). MUST write a result file — a terminal 'cancelled'
+        # event without one is excluded from completed_leaves() and would re-run.
+        if self._cancel.is_set():
+            res = _cancelled_result(req)
+            self.journal.write_leaf_result(req.leaf_id, res.as_dict())
+            self._emit({"leaf_id": req.leaf_id, "label": req.label, "phase": req.phase,
+                        "event": "cancelled"})
+            with self._cache_lock:
+                self._cache[req.leaf_id] = res.as_dict()
+            self._record(res)
+            return res
+
         est_in = max(1, len(req.prompt) // 4)
         est_out = req.max_tokens or 400
         est_usd = req.route.est_usd(est_in, est_out)
@@ -122,6 +136,8 @@ class Engine:
             self.budget.reserve(est_tokens=(est_in + est_out) * mult, est_usd=est_usd * mult)
         except (BudgetExceeded, DeadlineExceeded) as exc:
             reason = "deadline" if isinstance(exc, DeadlineExceeded) else "budget"
+            if isinstance(exc, DeadlineExceeded):
+                self._cancel.set()  # deadline breach → stop the whole fleet
             res = _fail_result(req, f"{reason}: {exc}")
             self._emit({"leaf_id": req.leaf_id, "label": req.label, "phase": req.phase,
                         "event": "failed", "error": str(exc), "reason": reason})
@@ -157,14 +173,14 @@ class Engine:
             self._emit({"leaf_id": req.leaf_id, "label": req.label, "phase": req.phase,
                         "event": res.status, "error": res.error,
                         "tokens": {"in": res.input_tokens, "out": res.output_tokens},
-                        "usd": res.usd, "elapsed_s": res.elapsed_s,
+                        "usd": res.usd, "elapsed_s": res.elapsed_s, "attempts": res.attempts,
                         "tokens_estimated": res.tokens_estimated})
         else:
             self._emit({"leaf_id": req.leaf_id, "label": req.label, "phase": req.phase,
                         "event": "completed", "backend": res.backend,
                         "provider": res.provider, "model": res.model,
                         "tokens": {"in": res.input_tokens, "out": res.output_tokens},
-                        "usd": res.usd, "elapsed_s": res.elapsed_s,
+                        "usd": res.usd, "elapsed_s": res.elapsed_s, "attempts": res.attempts,
                         "repaired": res.repaired, "tokens_estimated": res.tokens_estimated,
                         "result_ref": result_ref})
         with self._cache_lock:
@@ -225,6 +241,15 @@ def _fail_result(req: LeafRequest, error: str) -> LeafResult:
         value=None, text="", backend=req.route.backend, provider=req.route.provider,
         model=req.route.model, input_tokens=0, output_tokens=0, usd=0.0,
         elapsed_s=0.0, pid=os.getpid(), error=error,
+    )
+
+
+def _cancelled_result(req: LeafRequest) -> LeafResult:
+    return LeafResult(
+        leaf_id=req.leaf_id, label=req.label, phase=req.phase, status="cancelled",
+        value=None, text="", backend=req.route.backend, provider=req.route.provider,
+        model=req.route.model, input_tokens=0, output_tokens=0, usd=0.0,
+        elapsed_s=0.0, pid=os.getpid(), error="cancelled",
     )
 
 

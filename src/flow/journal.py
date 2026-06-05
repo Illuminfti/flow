@@ -15,6 +15,8 @@ from typing import Any, Iterator, Optional
 
 from .ids import utc_now
 
+# "cancelled" is intentionally NOT terminal: a cancelled leaf is work that did
+# not happen, so `resume` re-runs it (resume = finish what got cut off).
 TERMINAL_EVENTS = {"completed", "cached"}
 
 

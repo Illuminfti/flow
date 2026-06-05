@@ -10,7 +10,7 @@ from .backends import BackendError, BackendResponse, register_backend
 from .budget import Budget, BudgetExceeded
 from .config import ConfigError
 from .router import RouterError, choose
-from .runtime import Workflow, run_workflow
+from .runtime import ExecutionResult, FailureMode, ParallelError, Workflow, run_workflow
 
 __version__ = "1.0.1"
 
@@ -24,6 +24,9 @@ __all__ = [
     "BackendError",
     "BackendResponse",
     "register_backend",
+    "FailureMode",
+    "ExecutionResult",
+    "ParallelError",
     "choose",
     "__version__",
 ]
