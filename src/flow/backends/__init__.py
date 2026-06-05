@@ -12,6 +12,7 @@ from typing import Callable
 from .. import config as _config
 from .base import Backend, BackendError, BackendResponse
 from .anthropic_sdk import AnthropicBackend
+from .codex import CodexBackend
 from .local import LocalBackend
 from .openai_http import OpenAIHTTPBackend
 from .shell_cmd import ShellCmdBackend
@@ -32,6 +33,31 @@ def _build_openai_http(req, cfg, prov) -> Backend:
         provider=req.route.provider,
         max_tokens=req.max_tokens,
         pricing=req.route.pricing,
+        extra_headers=dict(prov.get("headers") or {}),
+    )
+
+
+def _build_codex(req, cfg, prov) -> Backend:
+    account = ""
+    if prov.get("account_field") and prov.get("auth_file"):
+        import json as _json
+        from pathlib import Path as _Path
+        try:
+            data = _json.loads(_Path(prov["auth_file"]).expanduser().read_text(encoding="utf-8"))
+            account = _config._dig(data, prov["account_field"]) or ""
+        except Exception:
+            account = ""
+    kw = {}
+    if prov.get("base_url"):
+        kw["base_url"] = prov["base_url"]
+    if prov.get("instructions"):
+        kw["instructions"] = prov["instructions"]
+    return CodexBackend(
+        token=_config.resolve_token(prov),
+        model=req.route.model,
+        account_id=account,
+        provider=req.route.provider,
+        **kw,
     )
 
 
@@ -67,6 +93,7 @@ def _build_local(req, cfg, prov) -> Backend:
 
 register_backend("openai_http", _build_openai_http)
 register_backend("anthropic_sdk", _build_anthropic)
+register_backend("codex", _build_codex)
 register_backend("shell_cmd", _build_shell_cmd)
 register_backend("local", _build_local)
 

@@ -124,7 +124,11 @@ One config file (`~/.config/flow/config.yaml`) — add any model with **zero cod
 
 ## Backends
 
-`openai_http` (default, stdlib · OpenAI/DeepSeek/Groq/Together/Mistral/OpenRouter/Ollama/LM Studio/vLLM) · `anthropic_sdk` · `shell_cmd` (drive **any** CLI — `ollama run`, `llm`, `hermes chat`) · `local`. Add your own with `register_backend()`. → [docs/backends.md](docs/backends.md)
+`openai_http` (default, stdlib · OpenAI/DeepSeek/Groq/Together/Mistral/OpenRouter/Ollama/LM Studio/vLLM) · `codex` (**ChatGPT Pro/Plus subscription** via the Codex Responses endpoint) · `anthropic_sdk` · `shell_cmd` (drive **any** CLI — `ollama run`, `llm`, `codex`, `claude -p`, `hermes chat`) · `local`. Add your own with `register_backend()`. → [docs/backends.md](docs/backends.md)
+
+## Use your subscriptions, not just API keys
+
+Drive flow with the OAuth products you already pay for — **ChatGPT Pro (Codex), Claude Max, Grok** — at no per-token cost. Generic token sources (`auth_env` / `auth_file` + `auth_field` / `auth_cmd`) + custom headers mean any OAuth token works anywhere an API key would, and `shell_cmd` routes through your authenticated CLI directly. → **[docs/subscriptions.md](docs/subscriptions.md)**
 
 ## Crash & resume
 

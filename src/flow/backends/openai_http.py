@@ -8,7 +8,7 @@ it is used for speed.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .base import BackendError, BackendResponse
 from .pricing import cost_usd, estimate_tokens
@@ -23,6 +23,7 @@ class OpenAIHTTPBackend:
     max_tokens: int | None = None
     temperature: float = 0.7
     pricing: tuple[float, float] = (0.0, 0.0)
+    extra_headers: dict = field(default_factory=dict)  # OAuth / vendor headers
 
     def __call__(self, prompt: str, *, timeout: float | None = None) -> BackendResponse:
         body = {
@@ -33,7 +34,7 @@ class OpenAIHTTPBackend:
         if self.max_tokens:
             body["max_tokens"] = self.max_tokens
         url = self.base_url.rstrip("/") + "/chat/completions"
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", **(self.extra_headers or {})}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         try:

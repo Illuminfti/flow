@@ -20,17 +20,21 @@ providers:
   anthropic: {kind: anthropic_sdk, auth_env: ANTHROPIC_API_KEY}
   deepseek:  {kind: openai_http,   base_url: "https://api.deepseek.com",  auth_env: DEEPSEEK_API_KEY}
   ollama:    {kind: openai_http,   base_url: "${OLLAMA_HOST:-http://localhost:11434}/v1", auth_env: null}
+  # Subscriptions / OAuth — no per-token cost. See docs/subscriptions.md
+  codex:     {kind: codex, auth_file: "~/.codex/auth.json", auth_field: "tokens.access_token", account_field: "tokens.account_id"}
+  claude-cli: {kind: shell_cmd, cmd_template: ["claude","-p","{prompt}"]}   # Claude Max via official CLI
 
 models:
   gpt-4o:       {provider: openai,    id: gpt-4o,          in: 2.5,  out: 10.0, free: false, caps: [reasoning, tool_call, structured, vision]}
   claude-opus:  {provider: anthropic, id: claude-opus-4-6, in: 5.0,  out: 25.0, free: false, caps: [reasoning, tool_call, structured, vision]}
   deepseek-v3:  {provider: deepseek,  id: deepseek-chat,   in: 0.27, out: 1.10, free: false, caps: [reasoning, tool_call, structured]}
   llama3-local: {provider: ollama,    id: llama3,          in: 0.0,  out: 0.0,  free: true,  caps: [tool_call]}
+  gpt55-sub:    {provider: codex,     id: gpt-5.5,         in: 0.0,  out: 0.0,  free: true,  caps: [reasoning, tool_call, structured]}
 
 tiers:
   quality: [gpt-4o, claude-opus]
   cheap:   [deepseek-v3, gpt-4o]
-  free:    [llama3-local]
+  free:    [gpt55-sub, llama3-local]   # subscription first — zero per-token cost
   local:   []
 
 defaults:

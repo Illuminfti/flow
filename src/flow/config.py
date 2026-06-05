@@ -168,6 +168,56 @@ def provider_of(cfg: dict, name: str) -> dict:
     return p
 
 
-def api_key_for(provider: dict) -> str:
+def _dig(data, dotted: str):
+    """Resolve a dotted/indexed path like 'tokens.access_token' or
+    'credential_pool.openai-codex[0].access_token' in nested JSON."""
+    cur = data
+    for part in dotted.split("."):
+        idx = None
+        if part.endswith("]") and "[" in part:
+            part, rest = part.split("[", 1)
+            idx = int(rest.rstrip("]"))
+        if part:
+            cur = cur.get(part) if isinstance(cur, dict) else None
+        if idx is not None and isinstance(cur, list):
+            cur = cur[idx] if idx < len(cur) else None
+        if cur is None:
+            return None
+    return cur
+
+
+def resolve_token(provider: dict) -> str:
+    """Resolve a provider's bearer token from (in priority): an env var
+    (``auth_env``), a JSON file field (``auth_file`` + dotted ``auth_field``),
+    or a command (``auth_cmd``). This is what lets flow use OAuth /
+    subscription tokens (Codex, Claude Max, xAI, ...) — not just API keys."""
+    import json as _json
+    import subprocess as _sp
     env = provider.get("auth_env")
-    return os.environ.get(env, "") if env else ""
+    if env:
+        v = os.environ.get(env, "")
+        if v:
+            return v
+    af = provider.get("auth_file")
+    if af:
+        try:
+            data = _json.loads(Path(af).expanduser().read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        field = provider.get("auth_field")
+        val = _dig(data, field) if field else data
+        return val if isinstance(val, str) else ""
+    cmd = provider.get("auth_cmd")
+    if cmd:
+        try:
+            shell = isinstance(cmd, str)
+            proc = _sp.run(cmd, shell=shell, capture_output=True, text=True, timeout=30)
+            return (proc.stdout or "").strip()
+        except Exception:
+            return ""
+    return ""
+
+
+def api_key_for(provider: dict) -> str:
+    return resolve_token(provider)
+
