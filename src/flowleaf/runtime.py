@@ -70,7 +70,6 @@ class Workflow:
         model: Optional[str] = None,
         provider: Optional[str] = None,
         toolsets: str = "",
-        role: Optional[str] = None,
         backend: Optional[str] = None,
         needs: Optional[set] = None,
         max_tokens: Optional[int] = None,
@@ -83,7 +82,7 @@ class Workflow:
             needs.add("structured")
         route = router_mod.choose(
             tier=tier, model=model, provider=provider, toolsets=toolsets,
-            role=role, backend=backend, needs=needs,
+            backend=backend, needs=needs,
         )
         lid = compute_leaf_id(
             run_script=self._script_id, phase=self._phase, label=label,
@@ -91,7 +90,7 @@ class Workflow:
         )
         req = LeafRequest(
             leaf_id=lid, label=label, phase=self._phase, prompt=prompt, route=route,
-            toolsets=toolsets, role=role, schema=schema, max_tokens=max_tokens,
+            toolsets=toolsets, schema=schema, max_tokens=max_tokens,
             timeout=timeout,
         )
         res = self._engine.submit_leaf(req)

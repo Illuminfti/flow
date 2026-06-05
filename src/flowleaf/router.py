@@ -62,8 +62,7 @@ def _pick_backend(cfg, *, model_entry, tier, forced) -> str:
 
 def choose(*, tier: Optional[str] = None, model: Optional[str] = None,
            provider: Optional[str] = None, toolsets: Optional[str] = None,
-           role: Optional[str] = None, backend: Optional[str] = None,
-           needs: Optional[set] = None,
+           backend: Optional[str] = None, needs: Optional[set] = None,
            est_in_tokens: int = 800, est_out_tokens: int = 400) -> Route:
     cfg = _config.get()
     models = cfg.get("models") or {}

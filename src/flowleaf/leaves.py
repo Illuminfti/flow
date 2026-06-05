@@ -15,8 +15,6 @@ from . import schema as schema_mod
 from .backends import BackendError, BackendResponse, build_backend
 from .router import Route
 
-RawCall = BackendResponse  # back-compat alias
-
 
 @dataclass
 class LeafRequest:
@@ -26,7 +24,6 @@ class LeafRequest:
     prompt: str
     route: Route
     toolsets: str = ""
-    role: Optional[str] = None
     schema: Any = None
     max_tokens: Optional[int] = None
     timeout: Optional[float] = None

@@ -21,15 +21,6 @@ class DeadlineExceeded(RuntimeError):
     """Raised when the run deadline has passed."""
 
 
-def estimate_tokens(text: str) -> int:
-    """~4 chars/token. Used when a backend cannot report real usage
-    (e.g. ``hermes chat -Q`` emits no token counts). Journaled as estimated,
-    never laundered as observed."""
-    if not text:
-        return 1
-    return max(1, len(text) // 4)
-
-
 @dataclass
 class Spend:
     input_tokens: int = 0
@@ -111,11 +102,6 @@ class Budget:
             self._spend.input_tokens += input_tokens
             self._spend.output_tokens += output_tokens
             self._spend.usd += usd
-
-    def release_call(self) -> None:
-        """Undo a reservation when a leaf was served from cache (no real call)."""
-        with self._lock:
-            self._spend.calls = max(0, self._spend.calls - 1)
 
     def spend(self) -> dict:
         with self._lock:
