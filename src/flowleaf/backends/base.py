@@ -24,7 +24,18 @@ class BackendResponse:
 
 class BackendError(RuntimeError):
     """Any failure producing a model response. The scheduler turns this into a
-    failed leaf, never a crash."""
+    failed leaf, never a crash.
+
+    ``retryable`` (or an HTTP ``status`` in {408,409,425,429,500,502,503,504})
+    tells the leaf runner to retry with backoff. Auth/4xx errors are terminal.
+    """
+
+    def __init__(self, message: str, *, status: int | None = None, retryable: bool | None = None):
+        super().__init__(message)
+        self.status = status
+        if retryable is None:
+            retryable = status in {408, 409, 425, 429, 500, 502, 503, 504} if status else False
+        self.retryable = retryable
 
 
 @runtime_checkable

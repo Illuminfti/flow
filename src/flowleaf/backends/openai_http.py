@@ -38,8 +38,11 @@ class OpenAIHTTPBackend:
             headers["Authorization"] = f"Bearer {self.api_key}"
         try:
             data = self._post(url, body, headers, timeout or 60.0)
+        except BackendError:
+            raise  # already tagged with status/retryable
         except Exception as exc:
-            raise BackendError(f"openai_http {self.provider}/{self.model}: {exc}") from exc
+            # network/timeout/connection errors are transient → retryable
+            raise BackendError(f"openai_http {self.provider}/{self.model}: {exc}", retryable=True) from exc
         try:
             text = (data["choices"][0]["message"].get("content") or "").strip()
         except (KeyError, IndexError, TypeError) as exc:
@@ -65,10 +68,11 @@ class OpenAIHTTPBackend:
             pass
         import urllib.error
         import urllib.request
+        from .base import BackendError
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")[:300]
-            raise RuntimeError(f"HTTP {e.code}: {detail}")
+            raise BackendError(f"HTTP {e.code}: {detail}", status=e.code)

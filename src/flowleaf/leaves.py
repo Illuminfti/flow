@@ -7,12 +7,14 @@ repair turn. Provider specifics live entirely in the backend.
 from __future__ import annotations
 
 import os
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from . import schema as schema_mod
 from .backends import BackendError, BackendResponse, build_backend
+from .constants import RETRY_BASE_MS, RETRY_CAP_MS, RETRY_MAX_ATTEMPTS
 from .router import Route
 
 
@@ -50,6 +52,7 @@ class LeafResult:
     pid: int
     repaired: bool = False
     tokens_estimated: bool = False
+    attempts: int = 1
     error: Optional[str] = None
 
     def as_dict(self) -> dict:
@@ -69,8 +72,22 @@ def run_leaf(req: LeafRequest) -> LeafResult:
     except Exception as exc:
         return _fail(req, f"backend init: {exc}", started)
 
+    rc = _retry_config()
+    stats = {"attempts": 0}
+
     def model_call(text_prompt: str) -> BackendResponse:
-        return backend(text_prompt, timeout=req.timeout)
+        # P1: retry transient (retryable) backend errors with jittered backoff.
+        last: Exception = BackendError("no attempt")
+        for attempt in range(rc["max_attempts"]):
+            stats["attempts"] += 1
+            try:
+                return backend(text_prompt, timeout=req.timeout)
+            except BackendError as exc:
+                last = exc
+                if not getattr(exc, "retryable", False) or attempt == rc["max_attempts"] - 1:
+                    raise
+                _backoff(attempt, rc["base_ms"], rc["cap_ms"])
+        raise last
 
     try:
         prompt = req.prompt
@@ -78,9 +95,9 @@ def run_leaf(req: LeafRequest) -> LeafResult:
             prompt = req.prompt + schema_mod.instruction(req.schema)
         raw = model_call(prompt)
     except BackendError as exc:
-        return _fail(req, str(exc), started)
+        return _fail(req, str(exc), started, attempts=stats["attempts"])
     except Exception as exc:
-        return _fail(req, f"{type(exc).__name__}: {exc}", started)
+        return _fail(req, f"{type(exc).__name__}: {exc}", started, attempts=stats["attempts"])
 
     value: Any = raw.native if raw.native is not None else raw.text
     repaired = False
@@ -120,14 +137,34 @@ def run_leaf(req: LeafRequest) -> LeafResult:
         provider=raw.provider or req.route.provider, model=raw.model or req.route.model,
         input_tokens=raw.input_tokens, output_tokens=raw.output_tokens, usd=raw.usd,
         elapsed_s=round(time.time() - started, 3), pid=os.getpid(),
-        repaired=repaired, tokens_estimated=raw.tokens_estimated, error=error,
+        repaired=repaired, tokens_estimated=raw.tokens_estimated,
+        attempts=stats["attempts"], error=error,
     )
 
 
-def _fail(req: LeafRequest, error: str, started: float) -> LeafResult:
+def _retry_config() -> dict:
+    try:
+        from . import config as _cfg
+        rc = (_cfg.get().get("engine") or {}).get("retry") or {}
+    except Exception:
+        rc = {}
+    return {
+        "max_attempts": int(rc.get("max_attempts", RETRY_MAX_ATTEMPTS)),
+        "base_ms": int(rc.get("base_ms", RETRY_BASE_MS)),
+        "cap_ms": int(rc.get("cap_ms", RETRY_CAP_MS)),
+    }
+
+
+def _backoff(attempt: int, base_ms: int, cap_ms: int) -> None:
+    delay_ms = min(cap_ms, base_ms * (2 ** attempt))
+    time.sleep((delay_ms / 1000.0) * (0.5 + random.random() * 0.5))  # full jitter
+
+
+def _fail(req: LeafRequest, error: str, started: float, attempts: int = 1) -> LeafResult:
     return LeafResult(
         leaf_id=req.leaf_id, label=req.label, phase=req.phase, status="failed",
         value=None, text="", backend=req.route.backend, provider=req.route.provider,
         model=req.route.model, input_tokens=0, output_tokens=0, usd=0.0,
-        elapsed_s=round(time.time() - started, 3), pid=os.getpid(), error=error[:800],
+        elapsed_s=round(time.time() - started, 3), pid=os.getpid(),
+        attempts=attempts, error=error[:800],
     )

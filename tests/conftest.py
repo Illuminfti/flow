@@ -5,7 +5,8 @@ import pytest
 from flowleaf import config
 
 TEST_CONFIG = {
-    "engine": {"executor": "thread", "budget": {"max_calls": 1000}},
+    "engine": {"executor": "thread", "budget": {"max_calls": 1000},
+               "retry": {"max_attempts": 3, "base_ms": 1, "cap_ms": 5}},
     "leaf": {
         "allow_light_models": False,
         "denylist": r"(?:^|[-_/])(mini|flash|haiku|nano|lite)(?:$|[-_/0-9.])",
