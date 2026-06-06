@@ -1,8 +1,6 @@
 # Subscriptions & OAuth — use what you already pay for
 
-flow is **not API-key-only**. You can drive it with the OAuth / subscription
-products you already have — ChatGPT Pro/Plus (Codex), Claude Max, xAI/Grok,
-Gemini, etc. — at no per-token cost. Three ways, simplest first.
+flow is **not API-key-only**. You can drive it with OAuth, local CLIs, and subscription-backed products you already have, depending on vendor support and your local configuration. Three ways, simplest first.
 
 ## 1. Drive your authenticated CLI (`shell_cmd`) — simplest, works today
 
@@ -44,13 +42,11 @@ models:
 tiers: { quality: [claude-max] }
 ```
 
-This is the most robust and ToS-clean path: you're using each vendor's own app
-for ordinary use; flow just orchestrates them.
+This is the most robust path: the vendor's own app owns login, refresh, and request semantics; flow just orchestrates the CLI process.
 
 ## 2. ChatGPT Pro/Plus directly — the `codex` backend (verified)
 
-Calls the Codex Responses endpoint with your ChatGPT OAuth token. Zero extra cost
-on a ChatGPT Pro/Plus plan.
+Calls the Codex Responses endpoint with your ChatGPT OAuth token when that local account is configured. It avoids separate API-key billing, but availability and policy are controlled by the vendor and your account.
 
 ```yaml
 providers:
@@ -104,10 +100,7 @@ providers:
 
 ## Notes
 
-- Subscription OAuth is intended for ordinary use of each vendor's own apps. Routing
-  third-party traffic through subscription credentials may be against a vendor's
-  terms (Anthropic restricts it explicitly) — that's your call. The `shell_cmd` →
-  official-CLI path (option 1) sidesteps this by using the vendor's own client.
+- Subscription OAuth is intended for ordinary use of each vendor's own apps. Routing third-party traffic through subscription credentials may be against a vendor's terms, and availability can change. The `shell_cmd` path uses the vendor's own client when that client is available.
 - Tokens are read at call time and never written to the journal, trace, or card.
 - Token **refresh** is the owning app's job — keep its CLI/login current (e.g.
   `codex login`, `claude auth login`).

@@ -21,7 +21,7 @@ Zero-config path (works immediately if an OpenAI-compatible key is present):
 
 ```bash
 export OPENAI_API_KEY=sk-...     # or DEEPSEEK_API_KEY, or run Ollama locally
-flow init                    # writes ~/.config/flow/config.yaml, lists detected keys
+flow init                    # writes ~/.config/flow/config.json or config.yaml, lists detected keys
 ```
 
 To add Anthropic, Ollama, DeepSeek, or any OpenAI-compatible endpoint, edit that file.

@@ -13,7 +13,7 @@ _CONFIG = {
         "anthropic": {"kind": "anthropic_sdk", "auth_env": "ANTHROPIC_API_KEY"},
         "deepseek": {"kind": "openai_http", "base_url": "https://api.deepseek.com", "auth_env": "DEEPSEEK_API_KEY"},
         "ollama": {"kind": "openai_http", "base_url": "${OLLAMA_HOST:-http://localhost:11434}/v1", "auth_env": None},
-        # Subscriptions / OAuth — no per-token cost. See docs/subscriptions.md
+        # Subscriptions / OAuth routes. See docs/subscriptions.md
         "codex": {"kind": "codex", "auth_file": "~/.codex/auth.json",
                   "auth_field": "tokens.access_token", "account_field": "tokens.account_id"},
         "claude-cli": {"kind": "shell_cmd", "cmd_template": ["claude", "-p", "{prompt}"]},

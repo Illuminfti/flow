@@ -3,14 +3,15 @@
 A backend is a callable `prompt -> BackendResponse`. The engine (scheduler, journal, budget,
 router, schema repair) is backend-agnostic, so adding a model provider = adding a backend.
 
-## Built-in
+## Backend matrix
 
-| kind            | use                                                                                                                                                                                  | config                 |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- |
-| `openai_http`   | **default**. Any OpenAI-compatible `/chat/completions` (OpenAI, DeepSeek, Groq, Together, Mistral, OpenRouter, Ollama, LM Studio, vLLM). Stdlib `urllib`; uses `httpx` if installed. | `base_url`, `auth_env` |
-| `anthropic_sdk` | Anthropic Messages API. Needs `[anthropic]`. **Native first-class tools** (`tool_use`/`tool_result` loop, per-leaf grants + approval gates + iteration cap), same as `openai_http`.  | `auth_env`             |
-| `shell_cmd`     | Drive any CLI. `cmd_template` is an argv **list** with `{prompt}`/`{model}`/`{provider}`/`{toolsets}` placeholders, run with `shell=False` (no injection).                           | `cmd_template`         |
-| `local`         | A deterministic Python callable (`wf.local`). No model.                                                                                                                              | —                      |
+| kind | use | tools | extra dependency |
+| --- | --- | --- | --- |
+| `openai_http` | **default**. Any OpenAI-compatible `/chat/completions` endpoint: OpenAI, DeepSeek, Groq, Together, Mistral, OpenRouter, Ollama, LM Studio, vLLM | yes | none |
+| `anthropic_sdk` | Anthropic Messages API | yes | `flow[anthropic]` |
+| `codex` | subscription-backed Codex route when locally configured | no, fails closed | none |
+| `shell_cmd` | drive any CLI through an argv list with `shell=False` | no, fails closed | none |
+| `local` | deterministic Python callable through `wf.local` | n/a | none |
 
 Examples of `shell_cmd` templates:
 

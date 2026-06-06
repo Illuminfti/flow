@@ -5,11 +5,11 @@ flow reads one config file so it works with **any models, zero code edits**.
 ## Where it looks (first match wins)
 
 1. `$FLOW_CONFIG`
-2. `./.flow.yaml`
-3. `$XDG_CONFIG_HOME/flow/config.yaml` (default `~/.config/flow/config.yaml`)
+2. `./.flow.yaml` or `./.flow.json`
+3. `$XDG_CONFIG_HOME/flow/config.yaml` or `config.json` (default `~/.config/flow/`)
 4. **zero-config** — if `OPENAI_API_KEY` is set, a one-model `quality` setup is synthesised.
 
-`flow init` writes a starter file. YAML needs the `[yaml]` extra; `.json` works with no extras.
+`flow init` writes a starter file. JSON works with no extras; YAML is used when PyYAML is installed.
 
 ## Schema
 

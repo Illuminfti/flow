@@ -2,8 +2,8 @@
 
 Load precedence:
   1. $FLOW_CONFIG
-  2. ./.flow.yaml
-  3. $XDG_CONFIG_HOME/flow/config.yaml  (default ~/.config/flow/config.yaml)
+  2. ./.flow.yaml or ./.flow.json
+  3. $XDG_CONFIG_HOME/flow/config.yaml or config.json  (default ~/.config/flow/)
   4. zero-config: if OPENAI_API_KEY is set, synthesise a one-model "quality" setup.
 
 ``${VAR}`` / ``${VAR:-default}`` interpolation (one level) lets you reference env

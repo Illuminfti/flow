@@ -31,7 +31,7 @@ https://github.com/Illuminfti/flow
 
 ```bash
 pipx install "git+https://github.com/Illuminfti/flow"   # or: uv tool install / pip install
-flow init                                                # writes ~/.config/flow/config.yaml
+flow init                                                # writes ~/.config/flow/config.json or config.yaml
 flow self-test --offline                                 # proves the engine runs, no network
 ```
 

@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a new capability or workflow pattern
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow or operator pain does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should flow do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: What did you try instead?
+  - type: textarea
+    id: proof
+    attributes:
+      label: Acceptance checks
+      description: What tests, examples, or docs should prove this is done?

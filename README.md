@@ -1,195 +1,316 @@
 <div align="center">
 
-# 🍃 flow
+# flow
 
-### the dynamic-workflow engine for **any agent, any model**
+### Dynamic workflows for LLM agents
 
-_Your code owns the orchestration. Models do bounded leaf work that runs **concurrently**, routes by **cost**, enforces **JSON schemas**, retries **transient failures**, and **resumes after a crash**._
+**Write orchestration in Python. Let models do bounded leaf work concurrently, with budgets, routing, schemas, retries, and leaf-level crash resume.**
 
 [![tests](https://github.com/Illuminfti/flow/actions/workflows/tests.yml/badge.svg)](https://github.com/Illuminfti/flow/actions/workflows/tests.yml)
+[![install smoke](https://github.com/Illuminfti/flow/actions/workflows/install-smoke.yml/badge.svg)](https://github.com/Illuminfti/flow/actions/workflows/install-smoke.yml)
 [![lint](https://github.com/Illuminfti/flow/actions/workflows/lint.yml/badge.svg)](https://github.com/Illuminfti/flow/actions/workflows/lint.yml)
 ![python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![core deps](https://img.shields.io/badge/core%20deps-0-orange)
-![backends](https://img.shields.io/badge/backends-openai%20%7C%20anthropic%20%7C%20ollama%20%7C%20any%20CLI-8a2be2)
-
-```python
-findings = wf.parallel([
-    lambda lens=lens: wf.agent(f"audit {repo} for {lens} bugs", schema=BUG, tier="quality")
-    for lens in ("correctness", "security", "performance")
-])
-```
-
-_Three models, three lenses, one wall-clock second. Verified, budgeted, resumable._
+![typed](https://img.shields.io/badge/typing-typed-blueviolet)
+![core deps](https://img.shields.io/badge/core%20runtime%20deps-0-orange)
 
 </div>
 
 ---
 
-## What it is
+## The promise
 
-`flow` is the Claude-Code-Workflow pattern, set free: a tiny engine where **the script — written by you, or authored by a model from a one-line task — expresses fan-out, pipelines, and verification**, and the engine runs the leaves across a real concurrency pool, picks the cheapest capable model per leaf, validates structured output, retries flaky calls, and writes a crash-resumable journal.
+`flow` is a small Python engine for dynamic workflows: your script owns the DAG, and model calls are treated as bounded, journaled leaves.
 
-Model-agnostic. Agent-agnostic. **Zero required dependencies.** Point Claude Code, a Hermes agent, or any tool-using LLM at it.
+Use it when one prompt is not enough:
 
-```mermaid
-flowchart LR
-    S["your script<br/>run(wf, args)"] -->|wf.parallel / pipeline / workflow| O((orchestration<br/>pool))
-    O -->|leaf descriptors| Q{router<br/>cost + caps}
-    Q -->|tier→cheapest capable| L((leaf<br/>pool))
-    L --> B1[openai_http]
-    L --> B2[anthropic]
-    L --> B3[shell_cmd<br/>ollama · llm · any CLI]
-    L --> B4[local]
-    L -->|every transition| J[(WAL journal<br/>crash-resume)]
-    J -.->|flow resume| L
-    Q -.->|budget gate<br/>tokens · usd · calls| L
-    L -.->|retry + backoff| B1
-```
+- fan out independent review lenses
+- verify findings adversarially
+- classify or transform batches
+- run generate, judge, repair loops
+- route each leaf to the cheapest capable model
+- resume after a crash without recomputing completed work
 
-## Why it's different
+Skip it for ordinary single-shot prompts, deterministic ETL, or unbudgeted low-value work. Workflows are powerful because they multiply work. Set a budget.
 
-|                                     |                                      **flow**                                      |    Claude Code Workflow    |
-| ----------------------------------- | :--------------------------------------------------------------------------------: | :------------------------: |
-| Runs anywhere                       |                             ✅ any box, `pip install`                              | ❌ inside Claude Code only |
-| Any model                           |              ✅ OpenAI · Anthropic · Ollama · DeepSeek · **any CLI**               |       ❌ Claude only       |
-| Per-leaf **cost-aware** routing     |                           ✅ tiers pick cheapest capable                           |        ❌ one tier         |
-| Crash-resume across processes       |                           ✅ fsync'd WAL, `flow resume`                            |    ⚠️ same-session only    |
-| Transient-error **retry + backoff** |                                    ✅ built-in                                     |             ❌             |
-| Schema output + auto-repair         |                    ✅ real JSON Schema (`jsonschema`) + repair                     |             ✅             |
-| Cancellation + deadline cascade     |                    ✅ Ctrl+C/SIGTERM/deadline, `wf.cancelled()`                    |             ✅             |
-| First-class tools + approval gates  | ✅ typed tools, per-leaf grants, approval callback (OpenAI **+ native Anthropic**) |       ✅ (built-in)        |
-| Cost prediction (dry-run)           |                           ✅ `--dry-run --estimate-cost`                           |             ❌             |
-| Subscriptions / OAuth (no API key)  |                 ✅ Codex (ChatGPT Pro), Claude Max, any token file                 |             —              |
-| Cross-run result cache              |                            ✅ opt-in, content-addressed                            |             ❌             |
-| Inspectable resume state            |                           ✅ `flow status` + resume plan                           |             ❌             |
-| True concurrency, no async          |                                 ✅ two-tier pools                                  |        ✅ (~16 cap)        |
-| Dependencies                        |                              **0** (stdlib `urllib`)                               |            n/a             |
-| License                             |                                 MIT, yours to fork                                 |        proprietary         |
+## Proof strip
+
+- **Concurrent leaves:** `wf.parallel`, `wf.pipeline`, nested `wf.workflow`
+- **Cost-aware routing:** model tiers pick the cheapest capable configured route
+- **Structured output:** JSON Schema validation with a repair turn
+- **Budgets:** tokens, USD, calls, and deadlines
+- **Durability:** fsync-backed journal plus `flow resume`
+- **Backends:** OpenAI-compatible HTTP, Anthropic SDK, Codex, shell commands, local Python, and custom backends
+- **Core runtime deps:** zero third-party packages required
 
 ## Install
 
 ```bash
 pipx install "git+https://github.com/Illuminfti/flow"
-# or:  pip install "flow[yaml,anthropic] @ git+https://github.com/Illuminfti/flow"
-# or:  uv tool install "git+https://github.com/Illuminfti/flow"
+# or
+pip install "flow[yaml,schema,anthropic] @ git+https://github.com/Illuminfti/flow"
+# or
+uv tool install "git+https://github.com/Illuminfti/flow"
 ```
 
-> PyPI release (`pipx install flow`) coming soon; install from git for now.
+PyPI release is pending. Install from GitHub for now.
+
+Extras:
+
+- `flow[yaml]`: YAML config support
+- `flow[schema]`: full JSON Schema validation through `jsonschema`
+- `flow[anthropic]`: native Anthropic SDK backend
+- `flow[all]`: all optional runtime extras
 
 ## 30-second quickstart
 
+No key, no network:
+
 ```bash
-export OPENAI_API_KEY=sk-...      # or any OpenAI-compatible key
-flow init                         # writes ~/.config/flow/config.yaml
-flow self-test --offline          # proves the engine runs — no network
-flow run --nl "summarize the top 3 risks of running trading bots on one server"
+flow self-test --offline
+flow run examples/offline_local.py
 ```
 
-## In Python
+Expected shape:
+
+```text
+offline: PASS (4 leaves; providers=[...])
+{
+  "status": "completed",
+  "leaf_count": 4,
+  "failed_count": 0
+}
+```
+
+First real model run:
+
+```bash
+export OPENAI_API_KEY=sk-...
+flow init
+flow doctor
+flow run --nl "review this repo for the three highest-risk release blockers" \
+  --budget '{"max_usd":1,"max_calls":8,"max_tokens":50000}'
+```
+
+Inspect it:
+
+```bash
+flow list
+flow trace <run_id>
+flow status <run_id>
+```
+
+## Minimal Python workflow
+
+Save this as `examples/quickstart.py`:
 
 ```python
 from flow import run_workflow
 
-BUG = {"type": "object", "required": ["title", "severity"],
-       "properties": {"title": {"type": "string"}, "severity": {"type": "string"}}}
+FINDING = {
+    "type": "object",
+    "required": ["title", "severity"],
+    "properties": {
+        "title": {"type": "string"},
+        "severity": {"type": "string"},
+    },
+}
+
 
 def run(wf, args):
     wf.phase("review")
+    lenses = ["correctness", "security", "performance"]
     findings = wf.parallel([
-        (lambda lens=lens: wf.agent(f"Review {args['files']} for {lens} bugs. Worst one only.",
-                                    label=f"review:{lens}", schema=BUG, tier="quality"))
-        for lens in ["correctness", "security", "performance"]
+        lambda lens=lens: wf.agent(
+            f"Review {args['target']} for one {lens} issue. Return JSON only.",
+            label=f"review:{lens}",
+            schema=FINDING,
+            tier="quality",
+            max_tokens=600,
+        )
+        for lens in lenses
     ])
+
     wf.phase("verify")
     return wf.parallel([
-        (lambda f=f: wf.agent(f"Refute if false: {f}", label="verify", tier="cheap", required=False))
-        for f in findings if f
+        lambda finding=finding: wf.agent(
+            f"Try to refute this finding. If real, explain why: {finding}",
+            label="verify",
+            tier="cheap",
+            required=False,
+            max_tokens=500,
+        )
+        for finding in findings
+        if finding
     ])
 
-report = run_workflow(run_fn=run, args={"files": ["app.py"]}, budget={"max_usd": 1})
-print(report["final"], report["spend"])
+
+if __name__ == "__main__":
+    report = run_workflow(
+        run_fn=run,
+        args={"target": "src/"},
+        budget={"max_usd": 1, "max_calls": 10},
+    )
+    print(report["final"])
 ```
 
-## The `wf` API — small on purpose
-
-```python
-wf.agent(prompt, *, label, schema, tier, model, provider, required, max_tokens, timeout,
-         tools=[...], tool_approval_gates={...})   # one model leaf (with optional tool-use loop)
-wf.local(fn, *args, **kwargs)                      # a deterministic no-model leaf (real Python)
-wf.parallel([thunk, ...], mode="lenient"|"fail_fast"|"collect_errors")   # run thunks concurrently
-wf.pipeline(items, *stages, mode=...)              # streaming fan-out through stages
-wf.workflow(child_fn, inputs)                      # nested workflow, shared pool, no depth cap
-wf.phase(name)                                     # checkpoint
-wf.log(msg, **fields) / wf.notify(msg)             # journal / escalate
-wf.spend() / wf.remaining() / wf.has_headroom() / wf.cancelled()   # budget + cancellation
-```
-
-Tools are first-class: `register_tool(ToolDefinition(name, description, parameters, handler, approval))`,
-then grant per leaf with `wf.agent(..., tools=["my_tool"])`. The model runs a bounded tool-use loop;
-side-effecting tools can require an approval callback. The tool-use loop runs **natively on both the
-`openai_http` backend** (OpenAI / DeepSeek / OpenRouter / Ollama / any OpenAI-compatible gateway) **and
-the `anthropic_sdk` backend** (Claude's Messages `tool_use`/`tool_result` protocol) — same grants,
-gates, iteration cap, and budget accounting. A leaf that requests tools on a backend without a tool
-loop (e.g. `shell_cmd`, `codex`) **fails closed** with a clear error rather than silently dropping the grant.
-
-## Models & routing
-
-One config file (`~/.config/flow/config.yaml`) — add any model with **zero code edits**. Define `providers`, `models` (with pricing + capabilities), and `tiers`. The router filters by capability and picks **minimum cost** within the tier. A light-model denylist is on by default (opt out with `leaf.allow_light_models: true`). → [docs/config.md](docs/config.md)
-
-## Backends
-
-`openai_http` (default, stdlib · OpenAI/DeepSeek/Groq/Together/Mistral/OpenRouter/Ollama/LM Studio/vLLM) · `codex` (**ChatGPT Pro/Plus subscription** via the Codex Responses endpoint) · `anthropic_sdk` · `shell_cmd` (drive **any** CLI — `ollama run`, `llm`, `codex`, `claude -p`, `hermes chat`) · `local`. Add your own with `register_backend()`. → [docs/backends.md](docs/backends.md)
-
-## Use your subscriptions, not just API keys
-
-Drive flow with the OAuth products you already pay for — **ChatGPT Pro (Codex), Claude Max, Grok** — at no per-token cost. Generic token sources (`auth_env` / `auth_file` + `auth_field` / `auth_cmd`) + custom headers mean any OAuth token works anywhere an API key would, and `shell_cmd` routes through your authenticated CLI directly. → **[docs/subscriptions.md](docs/subscriptions.md)**
-
-## Crash & resume
+Run it:
 
 ```bash
-flow run myflow.py --run-id audit-42      # crashes? kill it, then:
-flow resume audit-42 myflow.py            # completed leaves are skipped, not recomputed
-flow trace audit-42                        # per-leaf model / cost / latency / retries
-flow trace audit-42 --json                 # structured spans (machine-readable)
+python examples/quickstart.py
 ```
 
-Resume is **leaf-level**: it replays the WAL and skips any leaf that reached a
-terminal state, re-running interrupted ones — not a full workflow-graph snapshot.
-**Schema** validation uses `jsonschema` when installed (`flow[schema]` — full
-nested/enum/array/oneOf checks); without it, a documented top-level subset.
+## Mental model
+
+```mermaid
+flowchart LR
+    A[Python workflow<br/>run(wf, args)] --> B[orchestration pool]
+    B --> C[leaf requests]
+    C --> D{router<br/>tier + capability + cost}
+    D --> E[leaf pool]
+    E --> F[OpenAI-compatible HTTP]
+    E --> G[Anthropic SDK]
+    E --> H[Codex or any CLI]
+    E --> I[local Python]
+    E --> J[(journal)]
+    J --> K[resume skips completed leaves]
+```
+
+The workflow code is deterministic control flow. Models do only the bounded leaf work you assign them.
+
+## The `wf` API
+
+```python
+wf.agent(prompt, *, label=None, schema=None, tier=None, model=None,
+         provider=None, backend=None, max_tokens=None, timeout=None,
+         tools=None, tool_approval_gates=None, required=True)
+
+wf.local(fn, *args, label=None, schema=None, **kwargs)
+wf.parallel([thunk, ...], mode="lenient")
+wf.pipeline(items, stage1, stage2, ..., mode="lenient")
+wf.workflow(child_fn, inputs=None, label="nested")
+wf.phase(name)
+wf.log(message, **fields)
+wf.notify(message, **fields)
+wf.spend()
+wf.remaining()
+wf.has_headroom(min_tokens=1000)
+wf.cancelled()
+```
+
+Failure modes for `parallel` and `pipeline`:
+
+- `lenient`: failed item becomes `None` and logs a warning
+- `fail_fast`: first completed failure raises `ParallelError` and cancels pending siblings
+- `collect_errors`: returns `ExecutionResult` envelopes in input order
+
+Pipeline stages may be `stage(cur)`, `stage(cur, item)`, `stage(cur, item, idx)`, or `stage(*args)`.
+
+## CLI reference
+
+```bash
+flow run workflow.py --args '{"target":"src"}' --budget '{"max_usd":1}'
+flow run --nl "audit this repo across four lenses" --budget '{"max_calls":8}'
+flow run --nl "draft a workflow" --dry-run --estimate-cost
+flow resume <run_id> workflow.py
+flow trace <run_id> --json
+flow status <run_id> --json
+flow author "make a workflow that classifies these files" -o workflow.py
+flow doctor
+flow self-test --offline
+flow self-test --online
+```
+
+Full reference: [`docs/cli.md`](docs/cli.md).
+
+## Backends and routing
+
+Configuration lives at `~/.config/flow/config.json` or `~/.config/flow/config.yaml`, unless `FLOW_CONFIG` points elsewhere. `flow init` writes JSON by default when YAML support is not installed, and YAML when PyYAML is available.
+
+| Backend | Use case | Tools | Extra dependency |
+| --- | --- | --- | --- |
+| `openai_http` | OpenAI, DeepSeek, OpenRouter, Groq, Together, Ollama-compatible servers | yes | none |
+| `anthropic_sdk` | Claude via Anthropic SDK | yes | `flow[anthropic]` |
+| `codex` | ChatGPT subscription-backed Codex route where configured | no, fails closed | none |
+| `shell_cmd` | any authenticated CLI, local model CLI, custom bridge | no, fails closed | none |
+| `local` | deterministic Python functions | n/a | none |
+
+More: [`docs/config.md`](docs/config.md), [`docs/backends.md`](docs/backends.md), [`docs/subscriptions.md`](docs/subscriptions.md).
+
+## Crash resume and observability
+
+Every run writes a journal under the configured data directory. Completed leaves are skipped on resume if their identity matches the script, phase, label, prompt, route, schema, and behavior-affecting options.
+
+```bash
+flow run myflow.py --run-id release-audit
+# kill it, reboot, or lose the terminal
+flow resume release-audit myflow.py
+flow trace release-audit
+flow status release-audit
+```
+
+`flow trace` shows per-leaf status, model, latency, retries, and spend. Leaves that fail before a backend call can show `provider/model: null` by design.
 
 ## Patterns
 
-Six reusable patterns ship in [`examples/patterns/`](examples/patterns) — classify-and-act,
-fan-out-and-synthesize, adversarial verification, generate-and-filter, tournament (pairwise
-comparative judgment), and loop-until-done — each fighting a specific failure mode (agentic
-laziness, self-preferential bias, goal drift). See **[docs/patterns.md](docs/patterns.md)**.
+Runnable examples live in [`examples/`](examples) and [`examples/patterns/`](examples/patterns). Use them as templates:
 
-> Workflows cost **significantly more tokens** — use them for complex, high-value tasks, not
-> ordinary ones. Always set a `--budget`. Patterns & framing distilled from Anthropic's
-> [_A harness for every task_](https://claude.com/blog/a-harness-for-every-task-dynamic-workflows-in-claude-code).
+- classify and act
+- generate and filter
+- loop until done
+- tournament judgment
+- audit template
+- simple parallel fan-out
 
-## For AI agents
+Pattern guide: [`docs/patterns.md`](docs/patterns.md).
 
-Setting this up _as an agent_? Read **[AGENTS.md](AGENTS.md)** — it's written for you.
+## What is tested
 
-**Install as a skill** (Claude Code / Hermes / any skill-aware agent): drop [`skill/SKILL.md`](skill/SKILL.md) into your skills dir so your agent reaches for flow automatically —
+CI and local tests cover the engine surface that should be trusted for routine use:
+
+- concurrency and failure modes
+- budgets, deadlines, retries, and cancellation
+- schema validation and repair
+- leaf-level crash resume
+- install smoke from a clean environment
+- local and shell backends
+- OpenAI-compatible and Anthropic tool loops through hermetic tests
+- status, trace, cache, cost prediction, and visual run-card generation
+
+Credential-gated tests cover live provider routes when secrets are available. Subscription-backed routes such as Codex depend on local authenticated configuration and are treated as environment-specific.
+
+Run the same checks:
 
 ```bash
-mkdir -p ~/.claude/skills/flow && curl -fsSL \
-  https://raw.githubusercontent.com/Illuminfti/flow/main/skill/SKILL.md \
-  -o ~/.claude/skills/flow/SKILL.md
+python -m pytest
+flow self-test --offline
+flow run examples/offline_local.py
 ```
 
-## What's tested vs. what's not (read before trusting a claim)
+Details: [`docs/testing.md`](docs/testing.md).
 
-- **Tested core (unit + clean-install CI):** concurrency, crash-resume (leaf-level), token/usd/calls budgets, schema enforce+repair, retry/backoff, router selection, cancellation + failure modes, tool-use loop + approval gates on **both `openai_http` and `anthropic_sdk`** (hermetic, no SDK/network), content cache, cost prediction, `local`/`shell_cmd` backends, the offline example.
-- **Tested in CI without credentials:** external-SIGKILL-mid-run-then-resume (real subprocess kill, returncode -9 → resume completes) runs on every push.
-- **Verified live, ad-hoc:** the `codex` (ChatGPT Pro) backend; `openai_http` request/auth/error handling against a real OpenAI-compatible server.
-- **Credential-gated (CI job skips cleanly without secrets):** real Anthropic calls, OAuth/subscription provider routes end-to-end (`pytest -m live`).
-- **Behaviour to know:** tool-use runs natively on the `openai_http` **and** `anthropic_sdk` backends; a leaf requesting tools on a backend without a tool loop (`shell_cmd`, `codex`) **fails closed** (no silent drop). `wf.parallel`/`wf.pipeline` turn a failed thunk/stage into `None` + a warning by default (or pick `mode="fail_fast"`/`"collect_errors"`); `flow trace` shows `provider/model: null` for leaves that failed _before_ a backend call (e.g. auth); resume reuses a leaf only when `(script, phase, label, prompt, route, schema)` are all identical.
+## Security model
+
+Authored workflows are trusted Python, not a sandbox. `flow` validates model-authored scripts to catch unsafe accidental output, but it is not a containment boundary for hostile code.
+
+Read before running untrusted workflows: [`SECURITY.md`](SECURITY.md) and [`docs/security.md`](docs/security.md).
+
+## Docs
+
+- [`docs/index.md`](docs/index.md): documentation map
+- [`docs/architecture.md`](docs/architecture.md): engine internals
+- [`docs/cli.md`](docs/cli.md): CLI reference
+- [`docs/api.md`](docs/api.md): Python API reference
+- [`docs/config.md`](docs/config.md): model and provider config
+- [`docs/backends.md`](docs/backends.md): backend details
+- [`docs/testing.md`](docs/testing.md): verification commands
+- [`docs/troubleshooting.md`](docs/troubleshooting.md): common failures
+- [`docs/comparison.md`](docs/comparison.md): positioning and tradeoffs
+
+## Contributing
+
+Contributions are welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md). Keep new behavior covered by deterministic tests, and separate CI-proven claims from live or environment-specific claims.
 
 ## License
 
-MIT © Illumi ([@Illuminfti](https://github.com/Illuminfti)) · contributions welcome
+MIT © Illumi [@Illuminfti](https://github.com/Illuminfti)
