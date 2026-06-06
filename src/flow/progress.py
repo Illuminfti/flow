@@ -186,6 +186,121 @@ def _bar(value: float, peak: float, width: int = 10) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+_CARD_COLOR = {"completed": "#3fb950", "failed": "#f85149", "schema_failed": "#d29922",
+               "cached": "#58a6ff", "running": "#8b949e"}
+
+_CARD_CSS = """
+*{margin:0;padding:0;box-sizing:border-box;font-family:'SF Mono','JetBrains Mono',ui-monospace,monospace}
+body{background:#0d1117;color:#e6edf3;padding:28px;width:720px}
+.hd{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+.leaf{font-size:30px}
+.title{font-size:22px;font-weight:700;letter-spacing:.5px}
+.run{color:#8b949e;font-size:13px;margin-left:auto}
+.pill{display:inline-block;padding:3px 12px;border-radius:999px;font-size:13px;font-weight:700}
+.pill.ok{background:rgba(63,185,80,.15);color:#3fb950;border:1px solid #238636}
+.pill.fail{background:rgba(248,81,73,.15);color:#f85149;border:1px solid #da3633}
+.sub{color:#8b949e;font-size:14px;margin:10px 0 18px}
+.sub b{color:#e6edf3}
+.phase{margin:16px 0 8px;color:#58a6ff;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;
+  border-bottom:1px solid #21262d;padding-bottom:6px;display:flex;justify-content:space-between}
+.leafrow{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:14px}
+.g{width:18px;text-align:center;font-weight:700}
+.lbl{flex:0 0 180px;color:#e6edf3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badge{flex:0 0 150px;font-size:11px;color:#c9d1d9;background:#161b22;border:1px solid #30363d;
+  border-radius:6px;padding:2px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.track{flex:1;height:8px;background:#161b22;border-radius:4px;overflow:hidden}
+.fill{height:100%;border-radius:4px}
+.meta{flex:0 0 150px;text-align:right;color:#8b949e;font-size:12px}
+.foot{margin-top:22px;padding-top:14px;border-top:1px solid #21262d;display:flex;justify-content:space-between;
+  color:#8b949e;font-size:13px}
+.foot b{color:#e6edf3}
+.tag{color:#d29922;font-size:11px;margin-left:6px}
+"""
+
+
+def card_html(run_id: str) -> Optional[str]:
+    """A self-contained dark HTML dashboard for a run (the visual form of ``trace``)."""
+    agg = _aggregate(run_id)
+    if not agg:
+        return None
+    ok = not agg["failed"]
+    peak = agg["max_elapsed"] or 1.0
+    rows = []
+    for ph in agg["phases"]:
+        items = agg["by_phase"].get(ph)
+        if not items:
+            continue
+        rows.append(f'<div class="phase"><span>{ph}</span><span>{len(items)} leaves</span></div>')
+        for e in items:
+            st = e.get("status", "running")
+            g = _GLYPH.get(st, "◌")
+            color = _CARD_COLOR.get(st, "#8b949e")
+            pct = max(4, min(100, round((e.get("elapsed_s", 0.0) / peak) * 100)))
+            badge = f"{(e.get('provider') or '').split('-')[0]}·{e.get('model') or '?'}"
+            tags = ""
+            if e.get("repaired"):
+                tags += '<span class="tag">⟳repair</span>'
+            if (e.get("attempts") or 1) > 1:
+                tags += f'<span class="tag">×{e["attempts"]}</span>'
+            if e.get("estimated"):
+                tags += '<span class="tag">~tok</span>'
+            rows.append(
+                f'<div class="leafrow"><span class="g" style="color:{color}">{g}</span>'
+                f'<span class="lbl">{(e.get("label") or "")}{tags}</span>'
+                f'<span class="badge">{badge}</span>'
+                f'<span class="track"><span class="fill" style="width:{pct}%;background:{color}"></span></span>'
+                f'<span class="meta">{e.get("elapsed_s", 0.0):.1f}s · {e.get("tokens", 0)}t · '
+                f'${e.get("usd", 0.0):.4f}</span></div>'
+            )
+    pill, pill_txt = ("ok", "completed") if ok else ("fail", "failed")
+    retries = f' · {agg["retries"]} retries' if agg["retries"] else ""
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>{_CARD_CSS}</style></head><body>
+<div class="hd"><span class="leaf">🍃</span><span class="title">flow</span>
+<span class="run">{run_id}</span></div>
+<div><span class="pill {pill}">{pill_txt}</span></div>
+<div class="sub"><b>{agg['count']}</b> leaves · <b>{agg['failed']}</b> failed ·
+<b>{agg['total_tok']:,}</b> tokens · <b>${agg['total_usd']:.4f}</b> · <b>{agg['max_elapsed']:.1f}s</b> peak{retries}</div>
+{''.join(rows)}
+<div class="foot"><span>{len(agg['phases'])} phases</span>
+<span><b>${agg['total_usd']:.4f}</b> spent · <b>{agg['total_tok']:,}</b> tok</span></div>
+</body></html>"""
+
+
+def render_card(run_id: str, out_path: Optional[str] = None, width: int = 720,
+                html2png: Optional[str] = None) -> Optional[str]:
+    """Render the run card to a PNG. Needs a Puppeteer-style ``html2png.js`` helper
+    (``node html2png.js <html> <png> <width> <minHeight>``); supply its path via the
+    ``html2png`` arg or the ``FLOW_HTML2PNG`` env var. Returns the PNG path, or None
+    if rendering is unavailable (degrades gracefully — never raises)."""
+    import os
+    import subprocess
+    import tempfile
+    html = card_html(run_id)
+    if html is None:
+        return None
+    script = html2png or os.environ.get("FLOW_HTML2PNG")
+    if not script or not os.path.exists(script):
+        return None
+    if out_path is None:
+        out_path = str(run_dir_for(run_id) / "card.png")
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as f:
+        f.write(html)
+        html_path = f.name
+    try:
+        proc = subprocess.run(["node", script, html_path, out_path, str(width), "120"],
+                              capture_output=True, text=True, timeout=60, env=dict(os.environ))
+        if proc.returncode == 0 and os.path.exists(out_path):
+            return out_path
+    except Exception:
+        pass
+    finally:
+        try:
+            os.unlink(html_path)
+        except OSError:
+            pass
+    return None
+
+
 def trace(run_id: str) -> str:
     """A box-drawing run dashboard."""
     agg = _aggregate(run_id)

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0 — visual run card (2026-06-06)
+
+- **`progress.card_html(run_id)` + `progress.render_card(run_id)`** — a self-contained dark
+  HTML dashboard for a run (phases, per-leaf status/model/latency/cost/retries) and a PNG
+  renderer. The renderer shells out to a Puppeteer-style `html2png.js` helper supplied via the
+  `html2png=` arg or the `FLOW_HTML2PNG` env var; with no renderer it degrades to `None` and
+  never raises. Same data as `trace`, but an image you can drop into a chat/dashboard.
+
 ## 1.2.0 — native Anthropic tools (8.5 → 9 follow-through, 2026-06-05)
 
 - **First-class tools on the `anthropic_sdk` backend**, at full parity with `openai_http`:
