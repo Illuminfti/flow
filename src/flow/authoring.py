@@ -189,15 +189,50 @@ def _one_shot(prompt: str, *, tier: Optional[str], timeout: float) -> str:
     return backend(prompt, timeout=timeout).text
 
 
+def _repair_prompt(nl_task: str, validation_error: AuthoringError, bad_code: str) -> str:
+    return (
+        f"{_API_CONTRACT}\n"
+        "The previous workflow script failed validation: "
+        f"{validation_error}. Rewrite the complete script so it satisfies the API contract. "
+        "Do not import disallowed modules such as os, sys, subprocess, pathlib, socket, shutil. "
+        "Output ONLY one python fenced block.\n\n"
+        f"Original task:\n{nl_task}\n\n"
+        "Invalid script:\n```python\n"
+        f"{bad_code[:12000]}\n```"
+    )
+
+
 def author(nl_task: str, *, tier: Optional[str] = None, timeout: int = 180,
-           chat_fn: Optional[Callable[[str], str]] = None) -> str:
+           chat_fn: Optional[Callable[[str], str]] = None,
+           repair_attempts: int = 1) -> str:
     """NL -> validated script. Uses the configured backend (or an injected
-    ``chat_fn`` for hosts that want to supply their own model call)."""
+    ``chat_fn`` for hosts that want to supply their own model call).
+
+    If the model emits a script that fails validation, one bounded repair turn
+    is attempted by default. Validation remains strict; repair replaces the
+    whole script instead of weakening the allowlist or editing strings in place.
+    """
     prompt = f"{_API_CONTRACT}\n{_FEWSHOT}\nNow write run(wf, args) for this task:\n{nl_task}"
-    out = chat_fn(prompt) if chat_fn else _one_shot(prompt, tier=tier, timeout=timeout)
+    call = chat_fn or (lambda p: _one_shot(p, tier=tier, timeout=timeout))
+    out = call(prompt)
     code = _extract_code(out)
-    validate(code)
-    return code
+    first_error: Optional[AuthoringError] = None
+    try:
+        validate(code)
+        return code
+    except AuthoringError as exc:
+        first_error = exc
+
+    last_error = first_error
+    for _ in range(max(0, repair_attempts)):
+        out = call(_repair_prompt(nl_task, last_error, code))
+        code = _extract_code(out)
+        try:
+            validate(code)
+            return code
+        except AuthoringError as exc:
+            last_error = exc
+    raise AuthoringError(f"authored script failed validation: initial={first_error}; final={last_error}")
 
 
 def author_and_save(nl_task: str, out_path: Optional[str] = None, **kw) -> str:

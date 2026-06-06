@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import contextvars
 import importlib.util
+import inspect
+from concurrent.futures import FIRST_COMPLETED, wait
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -128,9 +130,22 @@ class Workflow:
             backend=backend, needs=needs,
         )
         schema_hash = stable_hash(schema) if schema is not None else ""
+        tools_identity = ""
+        if tools:
+            tools_identity = stable_hash({
+                "tools": [
+                    getattr(t, "name", None)
+                    or getattr(t, "__name__", None)
+                    or f"{getattr(t, '__module__', '')}.{getattr(t, '__qualname__', repr(t))}"
+                    for t in tools
+                ],
+                "approval": tool_approval_gates or {},
+            })
         lid = compute_leaf_id(
             run_script=self._script_id, phase=self._phase, label=label,
             prompt=prompt, model=route.model, backend=route.backend, schema=schema_hash,
+            provider=provider or "", toolsets=toolsets or "", tools=tools_identity,
+            max_tokens=str(max_tokens) if max_tokens is not None else "",
         )
         req = LeafRequest(
             leaf_id=lid, label=label, phase=self._phase, prompt=prompt, route=route,
@@ -158,6 +173,7 @@ class Workflow:
             run_script=self._script_id, phase=self._phase, label=label,
             prompt=stable_hash([getattr(fn, '__name__', 'fn'), args, kwargs]),
             model="local", backend="local",
+            schema=stable_hash(schema) if schema is not None else "",
         )
         req = LeafRequest(
             leaf_id=lid, label=label, phase=self._phase, prompt="<local>", route=route,
@@ -185,6 +201,26 @@ class Workflow:
         mode: "lenient" (failed -> None + warn, default), "fail_fast" (raise
         ParallelError, cancel the rest), "collect_errors" (ExecutionResult envelopes).
         """
+        if mode == "fail_fast":
+            out: list[Any] = [None] * len(futures)
+            pending = set(futures)
+            index = {f: i for i, f in enumerate(futures)}
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for f in done:
+                    idx = index[f]
+                    if self._engine._cancel.is_set():
+                        for p in pending:
+                            p.cancel()
+                        return out
+                    try:
+                        out[idx] = f.result()
+                    except Exception as exc:
+                        for p in pending:
+                            p.cancel()
+                        raise ParallelError(idx, exc) from exc
+            return out
+
         out: list[Any] = []
         for idx, f in enumerate(futures):
             if self._engine._cancel.is_set():
@@ -195,16 +231,40 @@ class Workflow:
                 r = f.result()
                 out.append(ExecutionResult(True, r, None, idx) if mode == "collect_errors" else r)
             except Exception as exc:
-                if mode == "fail_fast":
-                    for p in futures[idx + 1:]:
-                        p.cancel()
-                    raise ParallelError(idx, exc) from exc
                 if mode == "collect_errors":
                     out.append(ExecutionResult(False, None, str(exc), idx))
                 else:
                     self.log(f"item {idx} failed: {exc}", level="warn")
                     out.append(None)
         return out
+
+    def _stage_call(self, stage: Callable[..., Any], cur: Any, item: Any, idx: int) -> Any:
+        """Call a pipeline stage with ergonomic arity while preserving the old
+        three-argument contract for normal and uninspectable callables."""
+        try:
+            sig = inspect.signature(stage)
+        except (TypeError, ValueError):
+            return stage(cur, item, idx)
+        positional = [
+            p for p in sig.parameters.values()
+            if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+        ]
+        required = [p for p in positional if p.default is p.empty]
+        if any(p.kind == p.VAR_POSITIONAL for p in sig.parameters.values()):
+            return stage(cur, item, idx)
+        if len(required) > 3:
+            raise TypeError(
+                f"pipeline stage {getattr(stage, '__name__', stage)!r} requires "
+                f"{len(required)} positional arguments; supported arities are 1, 2, or 3"
+            )
+        argc = min(3, len(positional))
+        if argc < 1:
+            raise TypeError(
+                f"pipeline stage {getattr(stage, '__name__', stage)!r} must accept "
+                "at least one positional argument"
+            )
+        args = (cur, item, idx)[:argc]
+        return stage(*args)
 
     def parallel(self, thunks: list[Callable[[], Any]], *, mode: str = "lenient") -> list[Any]:
         futures = [self._engine.orch_pool.submit(self._bind_phase(t)) for t in thunks]
@@ -216,7 +276,7 @@ class Workflow:
             for stage in stages:
                 if cur is None:
                     break
-                cur = stage(cur, item, idx)
+                cur = self._stage_call(stage, cur, item, idx)
             return cur
 
         futures = [self._engine.orch_pool.submit(self._bind_phase(run_item), it, i)

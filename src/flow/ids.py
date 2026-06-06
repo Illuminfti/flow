@@ -36,23 +36,33 @@ def new_run_id(slug: str = "run") -> str:
 
 
 def leaf_id(*, run_script: str, phase: str, label: str, prompt: str,
-            model: str, backend: str, schema: str = "") -> str:
+            model: str, backend: str, schema: str = "",
+            provider: str = "", toolsets: str = "", tools: str = "",
+            max_tokens: str = "", local: str = "") -> str:
     """Content-addressed leaf id == resume + cache key.
 
-    Identical (script, phase, label, prompt, model, backend, schema) →
-    identical id → a completed result is reused verbatim on resume. ``schema``
-    is part of the key: two otherwise-identical leaves with different output
-    schemas are different work and must NOT share a cached result.
+    Identical behavior-affecting inputs → identical id → a completed result is
+    reused verbatim on resume. ``schema`` is part of the key: two otherwise-
+    identical leaves with different output schemas are different work and must
+    NOT share a cached result. Optional fields are only included when non-empty
+    so existing callers keep their historical ids.
     """
-    return "l-" + stable_hash(
-        {
-            "run_script": run_script,
-            "phase": phase,
-            "label": label,
-            "prompt": prompt,
-            "model": model,
-            "backend": backend,
-            "schema": schema,
-        },
-        length=16,
-    )
+    payload = {
+        "run_script": run_script,
+        "phase": phase,
+        "label": label,
+        "prompt": prompt,
+        "model": model,
+        "backend": backend,
+        "schema": schema,
+    }
+    for key, value in {
+        "provider": provider,
+        "toolsets": toolsets,
+        "tools": tools,
+        "max_tokens": max_tokens,
+        "local": local,
+    }.items():
+        if value:
+            payload[key] = value
+    return "l-" + stable_hash(payload, length=16)
