@@ -4,7 +4,7 @@ import pytest
 
 from flow import authoring
 from flow.ids import leaf_id
-from flow.runtime import ParallelError, run_workflow
+from flow.runtime import run_workflow
 
 
 def test_author_repairs_disallowed_import_once():
