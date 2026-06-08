@@ -2,9 +2,9 @@
 
 # flow
 
-### Dynamic workflows for LLM agents
+### Runtime infrastructure for bounded LLM workflow execution
 
-**Write orchestration in Python. Let models do bounded leaf work concurrently, with budgets, routing, schemas, retries, and leaf-level crash resume.**
+**Define control flow in Python. Execute model calls as bounded, validated, journaled leaves with concurrency, routing, retries, repair, budgets, artifacts, and crash resume.**
 
 [![tests](https://github.com/Illuminfti/flow/actions/workflows/tests.yml/badge.svg)](https://github.com/Illuminfti/flow/actions/workflows/tests.yml)
 [![install smoke](https://github.com/Illuminfti/flow/actions/workflows/install-smoke.yml/badge.svg)](https://github.com/Illuminfti/flow/actions/workflows/install-smoke.yml)
@@ -20,26 +20,32 @@
 
 ## The promise
 
-`flow` is a small Python engine for dynamic workflows: your script owns the DAG, and model calls are treated as bounded, journaled leaves.
+`flow` is a small Python runtime for executing dynamic LLM workflows under explicit operational controls. Your program owns the DAG. The runtime executes leaf work with durable identity, budget enforcement, provider routing, structured-output validation, retry policy, repair attempts, artifact handling, and resume semantics.
 
-Use it when one prompt is not enough:
+Use it when LLM calls are part of a larger computation and need runtime guarantees:
 
-- fan out independent review lenses
-- verify findings adversarially
-- classify or transform batches
-- run generate, judge, repair loops
-- route each leaf to the cheapest capable model
-- resume after a crash without recomputing completed work
+- fan out independent checks or transformations
+- run adjudication, verification, or repair phases
+- classify, extract, or transform batches with bounded spend
+- route each leaf to the cheapest configured capable backend
+- enforce JSON Schema at the leaf boundary
+- repair malformed structured outputs before failing the workflow
+- resume after interruption without recomputing completed leaves
+- inspect per-leaf latency, retries, spend, repair attempts, and failures
 
-Skip it for ordinary single-shot prompts, deterministic ETL, or unbudgeted low-value work. Workflows are powerful because they multiply work. Set a budget.
+Skip it for ordinary single-shot prompts, deterministic ETL, or unbudgeted low-value work. Workflows multiply calls. Treat budget, deadline, and failure policy as part of the program.
 
 ## Proof strip
 
-- **Concurrent leaves:** `wf.parallel`, `wf.pipeline`, nested `wf.workflow`
-- **Cost-aware routing:** model tiers pick the cheapest capable configured route
-- **Structured output:** JSON Schema validation with a repair turn
+- **Runtime primitives:** `wf.parallel`, `wf.pipeline`, nested `wf.workflow`
+- **Durable leaf identity:** resume skips completed leaves when script, phase, label, prompt, route, schema, and behavior-affecting options match
+- **Cost-aware routing:** model tiers choose the cheapest configured capable route
+- **Structured boundaries:** JSON Schema validation at leaf completion
+- **Self-healing repair:** malformed structured outputs are retried with the exact validation error and prior bad output; repaired leaves complete normally
+- **Failure policy:** optional malformed leaves can finalize as warnings; required malformed leaves fail the workflow
 - **Budgets:** tokens, USD, calls, and deadlines
 - **Durability:** fsync-backed journal plus `flow resume`
+- **Large-output handling:** oversized leaf output can be stored as an artifact reference
 - **Backends:** OpenAI-compatible HTTP, Anthropic SDK, Codex, shell commands, local Python, and custom backends
 - **Core runtime deps:** zero third-party packages required
 
@@ -78,7 +84,9 @@ offline: PASS (4 leaves; providers=[...])
 {
   "status": "completed",
   "leaf_count": 4,
-  "failed_count": 0
+  "failed_count": 0,
+  "warning_count": 0,
+  "self_healed_count": 0
 }
 ```
 
@@ -239,7 +247,7 @@ More: [`docs/config.md`](docs/config.md), [`docs/backends.md`](docs/backends.md)
 
 ## Crash resume and observability
 
-Every run writes a journal under the configured data directory. Completed leaves are skipped on resume if their identity matches the script, phase, label, prompt, route, schema, and behavior-affecting options.
+Every run writes an fsync-backed journal under the configured data directory. Completed leaves are skipped on resume if their durable identity matches the script, phase, label, prompt, route, schema, and behavior-affecting options.
 
 ```bash
 flow run myflow.py --run-id release-audit
@@ -249,7 +257,13 @@ flow trace release-audit
 flow status release-audit
 ```
 
-`flow trace` shows per-leaf status, model, latency, retries, and spend. Leaves that fail before a backend call can show `provider/model: null` by design.
+`flow trace` shows per-leaf status, model, latency, backend retries, structured-output `repair_attempts`, and spend. Leaves that fail before a backend call can show `provider/model: null` by design.
+
+Structured-output leaves are self-healing. By default, `schema_repair_attempts` is `2`: the runtime passes the exact validation error and previous malformed output into the repair prompt. If repair succeeds, the leaf is marked completed and appears in `self_healed_count` and `self_healed[]`. Failed or warning leaves keep their `repair_attempts` for inspection.
+
+Oversized leaf outputs are not inlined into reports. They are written as artifacts and surfaced by artifact reference.
+
+If finalization fails after useful leaves have completed, the engine can still return the completed work through its finalization fallback instead of discarding the run.
 
 ## Patterns
 
@@ -266,16 +280,19 @@ Pattern guide: [`docs/patterns.md`](docs/patterns.md).
 
 ## What is tested
 
-CI and local tests cover the engine surface that should be trusted for routine use:
+CI and local tests cover the runtime surface that should be trusted for routine use:
 
 - concurrency and failure modes
 - budgets, deadlines, retries, and cancellation
-- schema validation and repair
+- schema validation and self-healing repair
+- optional malformed leaves as warnings and required malformed leaves as fatal
+- oversized output artifact references
+- finalization fallback after useful completed leaves
 - leaf-level crash resume
 - install smoke from a clean environment
 - local and shell backends
 - OpenAI-compatible and Anthropic tool loops through hermetic tests
-- status, trace, cache, cost prediction, and visual run-card generation
+- status, trace, cache, cost prediction, self-heal reporting, and visual run-card generation
 
 Credential-gated tests cover live provider routes when secrets are available. Subscription-backed routes such as Codex depend on local authenticated configuration and are treated as environment-specific.
 

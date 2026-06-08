@@ -1,8 +1,8 @@
 """Leaf execution — request, result, and the backend-agnostic runner.
 
 A leaf is one unit of model work. ``run_leaf`` resolves the route to a Backend
-(see ``backends/``), calls it, and applies schema enforcement with one bounded
-repair turn. Provider specifics live entirely in the backend.
+(see ``backends/``), calls it, and applies schema enforcement with bounded
+repair turns. Provider specifics live entirely in the backend.
 """
 from __future__ import annotations
 
@@ -55,6 +55,8 @@ class LeafResult:
     elapsed_s: float
     pid: int
     repaired: bool = False
+    repair_attempts: int = 0
+    self_healed: bool = False
     tokens_estimated: bool = False
     attempts: int = 1
     tool_calls_made: int = 0
@@ -116,6 +118,8 @@ def run_leaf(req: LeafRequest) -> LeafResult:
 
     value: Any = raw.native if raw.native is not None else raw.text
     repaired = False
+    repair_attempts = 0
+    self_healed = False
     status = "completed"
     error = None
 
@@ -126,25 +130,39 @@ def run_leaf(req: LeafRequest) -> LeafResult:
         elif is_local:
             status, error, value = "schema_failed", perr, parsed
         else:
-            try:
-                rp = schema_mod.repair_prompt(req.prompt, req.schema, raw.text, perr or "invalid")
-                raw2 = model_call(rp)
-                raw = BackendResponse(
-                    text=raw2.text,
-                    input_tokens=raw.input_tokens + raw2.input_tokens,
-                    output_tokens=raw.output_tokens + raw2.output_tokens,
-                    usd=raw.usd + raw2.usd,
-                    tokens_estimated=raw.tokens_estimated or raw2.tokens_estimated,
-                    provider=raw.provider, model=raw.model,
-                )
-                ok2, parsed2, perr2 = schema_mod.parse(raw2.text, req.schema)
-                repaired = True
-                if ok2:
-                    value = parsed2
-                else:
-                    status, error, value = "schema_failed", perr2, parsed2
-            except Exception as exc:
-                status, error = "schema_failed", str(exc)[:600]
+            last_text = raw.text
+            last_error = perr or "invalid"
+            last_value = parsed
+            for _repair_idx in range(_schema_repair_attempts()):
+                repair_attempts += 1
+                try:
+                    rp = schema_mod.repair_prompt(req.prompt, req.schema, last_text, last_error)
+                    raw2 = model_call(rp)
+                    raw = BackendResponse(
+                        text=raw2.text,
+                        input_tokens=raw.input_tokens + raw2.input_tokens,
+                        output_tokens=raw.output_tokens + raw2.output_tokens,
+                        usd=raw.usd + raw2.usd,
+                        tokens_estimated=raw.tokens_estimated or raw2.tokens_estimated,
+                        provider=raw.provider, model=raw.model,
+                        tool_calls_made=(getattr(raw, "tool_calls_made", 0) + getattr(raw2, "tool_calls_made", 0)),
+                    )
+                    ok2, parsed2, perr2 = schema_mod.parse(raw2.text, req.schema)
+                    repaired = True
+                    if ok2:
+                        status, error, value = "completed", None, parsed2
+                        self_healed = True
+                        break
+                    last_text = raw2.text
+                    last_error = perr2 or "invalid"
+                    last_value = parsed2
+                except Exception as exc:
+                    last_error = str(exc)[:600]
+                    break
+            else:
+                status, error, value = "schema_failed", last_error, last_value
+            if status != "completed" and error is None:
+                status, error, value = "schema_failed", last_error, last_value
 
     return LeafResult(
         leaf_id=req.leaf_id, label=req.label, phase=req.phase, status=status,
@@ -152,7 +170,8 @@ def run_leaf(req: LeafRequest) -> LeafResult:
         provider=raw.provider or req.route.provider, model=raw.model or req.route.model,
         input_tokens=raw.input_tokens, output_tokens=raw.output_tokens, usd=raw.usd,
         elapsed_s=round(time.time() - started, 3), pid=os.getpid(),
-        repaired=repaired, tokens_estimated=raw.tokens_estimated,
+        repaired=repaired, repair_attempts=repair_attempts, self_healed=self_healed,
+        tokens_estimated=raw.tokens_estimated,
         attempts=stats["attempts"], tool_calls_made=getattr(raw, "tool_calls_made", 0), error=error,
         required=req.required, error_kind=schema_mod.error_kind(error) if status == "schema_failed" else None,
     )
@@ -169,6 +188,16 @@ def _retry_config() -> dict:
         "base_ms": int(rc.get("base_ms", RETRY_BASE_MS)),
         "cap_ms": int(rc.get("cap_ms", RETRY_CAP_MS)),
     }
+
+
+def _schema_repair_attempts() -> int:
+    try:
+        from . import config as _cfg
+        engine = (_cfg.get().get("engine") or {})
+        value = engine.get("schema_repair_attempts", 2)
+    except Exception:
+        value = 2
+    return max(0, int(value))
 
 
 def _backoff(attempt: int, base_ms: int, cap_ms: int) -> None:

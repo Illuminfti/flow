@@ -33,6 +33,7 @@ _DEFAULTS: dict[str, Any] = {
         "orch_workers": None,
         "data_dir": None,
         "budget": {"max_tokens": None, "max_usd": None, "max_calls": 1000, "deadline_seconds": None},
+        "schema_repair_attempts": 2,
     },
     "leaf": {
         "allow_light_models": False,

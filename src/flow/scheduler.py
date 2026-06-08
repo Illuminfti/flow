@@ -202,6 +202,7 @@ class Engine:
             "tokens": {"in": res.input_tokens, "out": res.output_tokens},
             "usd": res.usd, "elapsed_s": res.elapsed_s, "attempts": res.attempts,
             "tokens_estimated": res.tokens_estimated, "required": res.required,
+            "repair_attempts": res.repair_attempts, "self_healed": res.self_healed,
             "error_kind": res.error_kind, "artifact_refs": res.artifact_refs,
             "result_ref": result_ref,
         }
@@ -290,6 +291,7 @@ class Engine:
         failed = [l for l in leaves if l["status"] in ("failed", "schema_failed")]
         required_failed = [l for l in failed if l.get("required", True)]
         warnings = [l for l in failed if not l.get("required", True)]
+        self_healed = [l for l in leaves if l.get("self_healed")]
         effective_status = status
         if required_failed or (status == "failed" and not finalization_error):
             effective_status = "failed"
@@ -302,6 +304,7 @@ class Engine:
             "resumed": self.resumed_count,
             "failed_count": len(failed),
             "required_failed_count": len(required_failed),
+            "self_healed_count": len(self_healed),
             "warning_count": len(warnings) + (1 if finalization_error else 0),
             "spend": self.budget.spend(),
             "remaining": self.budget.remaining(),
@@ -309,14 +312,21 @@ class Engine:
             "final": final,
             "finalization_error": finalization_error,
             "failed": [{"label": l["label"], "error": l["error"], "required": l.get("required", True),
-                         "error_kind": l.get("error_kind"), "artifact_refs": l.get("artifact_refs", [])}
+                         "error_kind": l.get("error_kind"), "repair_attempts": l.get("repair_attempts", 0),
+                         "artifact_refs": l.get("artifact_refs", [])}
                         for l in failed],
             "required_failed": [{"label": l["label"], "error": l["error"], "required": True,
-                                 "error_kind": l.get("error_kind"), "artifact_refs": l.get("artifact_refs", [])}
+                                 "error_kind": l.get("error_kind"), "repair_attempts": l.get("repair_attempts", 0),
+                                 "artifact_refs": l.get("artifact_refs", [])}
                                 for l in required_failed],
             "warnings": [{"label": l["label"], "error": l["error"], "required": False,
-                          "error_kind": l.get("error_kind"), "artifact_refs": l.get("artifact_refs", [])}
+                          "error_kind": l.get("error_kind"), "repair_attempts": l.get("repair_attempts", 0),
+                          "artifact_refs": l.get("artifact_refs", [])}
                          for l in warnings],
+            "self_healed": [{"label": l["label"], "phase": l.get("phase"),
+                             "repair_attempts": l.get("repair_attempts", 0),
+                             "provider": l.get("provider"), "model": l.get("model")}
+                            for l in self_healed],
             "artifacts": [ref for l in leaves for ref in l.get("artifact_refs", [])],
         }
 

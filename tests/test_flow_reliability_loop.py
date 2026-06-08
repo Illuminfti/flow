@@ -36,6 +36,53 @@ def test_optional_schema_failure_is_warning_not_generic_run_failure(monkeypatch)
     assert rep["warnings"][0]["error_kind"] == "parse_error"
 
 
+def test_schema_poison_leaf_repairs_until_valid(monkeypatch):
+    factory, state = _fake_factory([
+        BackendResponse("not json", 5, 5),
+        BackendResponse('{"title":"missing severity"}', 7, 7),
+        BackendResponse('{"title":"fixed","severity":"high"}', 11, 13),
+    ])
+    monkeypatch.setattr(leaves, "build_backend", factory)
+
+    def run(wf, args):
+        wf.phase("repair")
+        return wf.agent("repairable lens", label="repairable-lens", schema=SCHEMA)
+
+    rep = run_workflow(run_fn=run, slug="repair-poison")
+    assert rep["status"] == "completed"
+    assert rep["final"] == {"title": "fixed", "severity": "high"}
+    assert rep["failed_count"] == 0
+    assert rep["warning_count"] == 0
+    assert rep["self_healed_count"] == 1
+    assert rep["self_healed"][0]["label"] == "repairable-lens"
+    assert rep["self_healed"][0]["repair_attempts"] == 2
+    assert state["i"] == 3
+
+
+def test_schema_poison_leaf_uses_last_repair_error_after_exhaustion(monkeypatch):
+    factory, state = _fake_factory([
+        BackendResponse("not json", 5, 5),
+        BackendResponse('{"title":"still missing severity"}', 7, 7),
+        BackendResponse('{"title":"still poisoned"}', 11, 13),
+    ])
+    monkeypatch.setattr(leaves, "build_backend", factory)
+
+    def run(wf, args):
+        wf.phase("repair")
+        return wf.agent("unrepairable lens", label="unrepairable-lens", schema=SCHEMA, required=False)
+
+    rep = run_workflow(run_fn=run, slug="unrepairable-poison")
+    assert rep["status"] == "completed_with_warnings"
+    assert rep["final"] is None
+    assert rep["warnings"][0]["label"] == "unrepairable-lens"
+    assert rep["warnings"][0]["error_kind"] == "schema_error"
+    assert rep["warnings"][0]["repair_attempts"] == 2
+    assert rep["self_healed_count"] == 0
+    assert rep["self_healed"] == []
+    assert "severity" in rep["warnings"][0]["error"]
+    assert state["i"] == 3
+
+
 def test_required_schema_failure_stays_fatal_with_error_kind(monkeypatch):
     factory, _ = _fake_factory([BackendResponse("not json", 5, 5), BackendResponse("still not json", 5, 5)])
     monkeypatch.setattr(leaves, "build_backend", factory)
