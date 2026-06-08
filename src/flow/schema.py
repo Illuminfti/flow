@@ -132,3 +132,10 @@ def repair_prompt(original_prompt: str, schema: Any, bad_text: str, error: str) 
         f"Previous response was:\n{bad_text[:1500]}\n\n"
         "Return ONLY the corrected JSON object. No explanation."
     )
+
+
+def error_kind(error: Optional[str]) -> str:
+    msg = (error or "").lower()
+    if "json" in msg or "no json" in msg or "parse" in msg or "expecting" in msg:
+        return "parse_error"
+    return "schema_error"

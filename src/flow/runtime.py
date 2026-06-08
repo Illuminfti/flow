@@ -151,6 +151,7 @@ class Workflow:
             leaf_id=lid, label=label, phase=self._phase, prompt=prompt, route=route,
             toolsets=toolsets, schema=schema, schema_hash=schema_hash, max_tokens=max_tokens,
             timeout=timeout, tools=list(tools or []), tool_approval_gates=dict(tool_approval_gates or {}),
+            required=required,
         )
         res = self._engine.submit_leaf(req)
         if res.status != "completed":
@@ -165,6 +166,7 @@ class Workflow:
         *args: Any,
         label: Optional[str] = None,
         schema: Any = None,
+        required: bool = True,
         **kwargs: Any,
     ) -> Any:
         label = label or f"local-{getattr(fn, '__name__', 'fn')}-{stable_hash([args, kwargs], 6)}"
@@ -177,11 +179,13 @@ class Workflow:
         )
         req = LeafRequest(
             leaf_id=lid, label=label, phase=self._phase, prompt="<local>", route=route,
-            schema=schema, local_fn=fn, local_args=args, local_kwargs=kwargs,
+            schema=schema, local_fn=fn, local_args=args, local_kwargs=kwargs, required=required,
         )
         res = self._engine.submit_leaf(req)
         if res.status != "completed":
-            raise RuntimeError(f"local leaf {label} {res.status}: {res.error}")
+            if required:
+                raise RuntimeError(f"local leaf {label} {res.status}: {res.error}")
+            return None
         return res.value
 
     # -- combinators -----------------------------------------------------
@@ -357,11 +361,27 @@ def run_workflow(
             _prev[_s] = signal.signal(_s, lambda *_a: engine._cancel.set())
         except (ValueError, OSError):
             pass
+    finalization_error = None
     try:
         final = run_fn(wf, args)
     except Exception as exc:
-        status = "failed"
         error = str(exc)
+        with engine._all_lock:
+            leaves = list(engine._all)
+        required_failed = [l for l in leaves if l.get("status") in ("failed", "schema_failed") and l.get("required", True)]
+        completed = [l for l in leaves if l.get("status") == "completed"]
+        if completed and not required_failed:
+            status = "completed"
+            finalization_error = str(exc)
+            final = {
+                "fallback": "finalization_failed_after_completed_leaves",
+                "error": str(exc),
+                "completed_leaf_count": len(completed),
+                "artifacts": [ref for l in leaves for ref in l.get("artifact_refs", [])],
+                "retry_hint": "Resume this run after reducing final synthesis input or raising the budget.",
+            }
+        else:
+            status = "failed"
     finally:
         for _s, _h in _prev.items():
             try:
@@ -369,7 +389,7 @@ def run_workflow(
             except (ValueError, OSError):
                 pass
         engine.shutdown()
-    report = engine.report(final=final, status=status)
+    report = engine.report(final=final, status=status, finalization_error=finalization_error)
     if error:
         report["error"] = error
     import json as _json

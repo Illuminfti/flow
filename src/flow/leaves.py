@@ -35,6 +35,7 @@ class LeafRequest:
     schema_hash: str = ""                              # for cross-run cache key parity
     tools: list = field(default_factory=list)          # granted tool names
     tool_approval_gates: dict = field(default_factory=dict)
+    required: bool = True
 
 
 @dataclass
@@ -58,6 +59,9 @@ class LeafResult:
     attempts: int = 1
     tool_calls_made: int = 0
     error: Optional[str] = None
+    required: bool = True
+    error_kind: Optional[str] = None
+    artifact_refs: list = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return dict(self.__dict__)
@@ -150,6 +154,7 @@ def run_leaf(req: LeafRequest) -> LeafResult:
         elapsed_s=round(time.time() - started, 3), pid=os.getpid(),
         repaired=repaired, tokens_estimated=raw.tokens_estimated,
         attempts=stats["attempts"], tool_calls_made=getattr(raw, "tool_calls_made", 0), error=error,
+        required=req.required, error_kind=schema_mod.error_kind(error) if status == "schema_failed" else None,
     )
 
 
@@ -177,5 +182,5 @@ def _fail(req: LeafRequest, error: str, started: float, attempts: int = 1) -> Le
         value=None, text="", backend=req.route.backend, provider=req.route.provider,
         model=req.route.model, input_tokens=0, output_tokens=0, usd=0.0,
         elapsed_s=round(time.time() - started, 3), pid=os.getpid(),
-        attempts=attempts, error=error[:800],
+        attempts=attempts, error=error[:800], required=req.required, error_kind="runtime_error",
     )

@@ -45,3 +45,14 @@ def test_dry_run_executes_dag_without_models(tmp_path, monkeypatch):
     res = authoring.dry_run(GOOD, args=None)
     assert res["ok"] is True
     assert res["leaf_count"] == 3  # 3 agent leaves, forced local, zero model calls
+
+
+def test_validate_rejects_unsafe_builtins_and_dunder_access():
+    for bad in [
+        'def run(wf, args):\n    return open("/tmp/x").read()\n',
+        'def run(wf, args):\n    return eval("1+1")\n',
+        'def run(wf, args):\n    return (1).__class__\n',
+        'def run(wf, args):\n    return __import__("os")\n',
+    ]:
+        with pytest.raises(authoring.AuthoringError):
+            authoring.validate(bad)

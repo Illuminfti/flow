@@ -15,6 +15,7 @@ asserted in the test suite.
 """
 from __future__ import annotations
 
+import hashlib
 import multiprocessing as mp
 import os
 import threading
@@ -195,21 +196,23 @@ class Engine:
         self.budget.commit(input_tokens=res.input_tokens,
                            output_tokens=res.output_tokens, usd=res.usd)
 
+        res = self._artifact_leaf_output(req, res)
         result_ref = self.journal.write_leaf_result(req.leaf_id, res.as_dict())
+        common = {
+            "tokens": {"in": res.input_tokens, "out": res.output_tokens},
+            "usd": res.usd, "elapsed_s": res.elapsed_s, "attempts": res.attempts,
+            "tokens_estimated": res.tokens_estimated, "required": res.required,
+            "error_kind": res.error_kind, "artifact_refs": res.artifact_refs,
+            "result_ref": result_ref,
+        }
         if res.status in ("failed", "schema_failed"):
             self._emit({"leaf_id": req.leaf_id, "label": req.label, "phase": req.phase,
-                        "event": res.status, "error": res.error,
-                        "tokens": {"in": res.input_tokens, "out": res.output_tokens},
-                        "usd": res.usd, "elapsed_s": res.elapsed_s, "attempts": res.attempts,
-                        "tokens_estimated": res.tokens_estimated})
+                        "event": res.status, "error": res.error, **common})
         else:
             self._emit({"leaf_id": req.leaf_id, "label": req.label, "phase": req.phase,
                         "event": "completed", "backend": res.backend,
                         "provider": res.provider, "model": res.model,
-                        "tokens": {"in": res.input_tokens, "out": res.output_tokens},
-                        "usd": res.usd, "elapsed_s": res.elapsed_s, "attempts": res.attempts,
-                        "repaired": res.repaired, "tokens_estimated": res.tokens_estimated,
-                        "result_ref": result_ref})
+                        "repaired": res.repaired, **common})
         with self._cache_lock:
             self._cache[req.leaf_id] = res.as_dict()
         if ck and res.status == "completed":
@@ -237,6 +240,41 @@ class Engine:
             "resumed": self.resumed_count,
         })
 
+    def _artifact_leaf_output(self, req: LeafRequest, res: LeafResult, *, limit: int = 12000) -> LeafResult:
+        """Persist oversized raw leaf text before preview truncation.
+
+        The materialized leaf result and run report should stay inspectable without
+        hauling giant model/tool output through every downstream prompt or status
+        view. The full text remains durable under artifacts/ with size + hash
+        metadata attached to the node result.
+        """
+        text = res.text or ""
+        if len(text) <= limit:
+            return res
+        artifacts_dir = self.run_dir / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        rel = f"artifacts/{req.leaf_id}-text.txt"
+        path = self.run_dir / rel
+        path.write_text(text, encoding="utf-8")
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        preview = text[:limit]
+        ref = {
+            "kind": "leaf_text",
+            "leaf_id": req.leaf_id,
+            "label": req.label,
+            "path": rel,
+            "byte_count": len(text.encode("utf-8")),
+            "char_count": len(text),
+            "preview_char_count": len(preview),
+            "truncation_reason": "oversized_leaf_text",
+            "sha256": digest,
+        }
+        refs = list(res.artifact_refs or [])
+        refs.append(ref)
+        res.text = preview
+        res.artifact_refs = refs
+        return res
+
     # -- lifecycle -------------------------------------------------------
     def shutdown(self) -> None:
         try:
@@ -246,21 +284,40 @@ class Engine:
             self.snapshot()
             self.journal.close()
 
-    def report(self, final: Any = None, status: str = "completed") -> dict:
+    def report(self, final: Any = None, status: str = "completed", finalization_error: str | None = None) -> dict:
         with self._all_lock:
             leaves = list(self._all)
         failed = [l for l in leaves if l["status"] in ("failed", "schema_failed")]
+        required_failed = [l for l in failed if l.get("required", True)]
+        warnings = [l for l in failed if not l.get("required", True)]
+        effective_status = status
+        if required_failed or (status == "failed" and not finalization_error):
+            effective_status = "failed"
+        elif finalization_error or warnings:
+            effective_status = "completed_with_warnings"
         return {
-            "status": "failed" if (failed and status == "completed") else status,
+            "status": effective_status,
             "run_dir": str(self.run_dir),
             "leaf_count": len(leaves),
             "resumed": self.resumed_count,
             "failed_count": len(failed),
+            "required_failed_count": len(required_failed),
+            "warning_count": len(warnings) + (1 if finalization_error else 0),
             "spend": self.budget.spend(),
             "remaining": self.budget.remaining(),
             "phases": sorted({l["phase"] for l in leaves if l.get("phase")}),
             "final": final,
-            "failed": [{"label": l["label"], "error": l["error"]} for l in failed],
+            "finalization_error": finalization_error,
+            "failed": [{"label": l["label"], "error": l["error"], "required": l.get("required", True),
+                         "error_kind": l.get("error_kind"), "artifact_refs": l.get("artifact_refs", [])}
+                        for l in failed],
+            "required_failed": [{"label": l["label"], "error": l["error"], "required": True,
+                                 "error_kind": l.get("error_kind"), "artifact_refs": l.get("artifact_refs", [])}
+                                for l in required_failed],
+            "warnings": [{"label": l["label"], "error": l["error"], "required": False,
+                          "error_kind": l.get("error_kind"), "artifact_refs": l.get("artifact_refs", [])}
+                         for l in warnings],
+            "artifacts": [ref for l in leaves for ref in l.get("artifact_refs", [])],
         }
 
 
@@ -269,7 +326,7 @@ def _fail_result(req: LeafRequest, error: str) -> LeafResult:
         leaf_id=req.leaf_id, label=req.label, phase=req.phase, status="failed",
         value=None, text="", backend=req.route.backend, provider=req.route.provider,
         model=req.route.model, input_tokens=0, output_tokens=0, usd=0.0,
-        elapsed_s=0.0, pid=os.getpid(), error=error,
+        elapsed_s=0.0, pid=os.getpid(), error=error, required=req.required, error_kind="runtime_error",
     )
 
 
@@ -278,7 +335,7 @@ def _cancelled_result(req: LeafRequest) -> LeafResult:
         leaf_id=req.leaf_id, label=req.label, phase=req.phase, status="cancelled",
         value=None, text="", backend=req.route.backend, provider=req.route.provider,
         model=req.route.model, input_tokens=0, output_tokens=0, usd=0.0,
-        elapsed_s=0.0, pid=os.getpid(), error="cancelled",
+        elapsed_s=0.0, pid=os.getpid(), error="cancelled", required=req.required, error_kind="cancelled",
     )
 
 
