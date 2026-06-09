@@ -7,6 +7,7 @@ a crash. Point any agent at it; configure any model in one YAML file.
 from __future__ import annotations
 
 from .backends import BackendError, BackendResponse, register_backend
+from .blocks import BlockStore, dedup_report
 from .budget import Budget, BudgetExceeded
 from .config import ConfigError
 from .loop import IterationRecord, LoopLedger, LoopRun, LoopSpec, VerifierIdentityError
@@ -29,6 +30,8 @@ __all__ = [
     "FailureMode",
     "ExecutionResult",
     "ParallelError",
+    "BlockStore",
+    "dedup_report",
     "LoopSpec",
     "LoopRun",
     "IterationRecord",

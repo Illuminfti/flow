@@ -23,9 +23,11 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from . import blocks as blocks_mod
 from . import cache as cache_mod
 from . import config as config_mod
 from . import schema as schema_mod
+from .backends.pricing import estimate_tokens
 from .budget import Budget, BudgetExceeded, DeadlineExceeded
 from .journal import Journal
 from .leaves import LeafRequest, LeafResult, run_leaf
@@ -69,17 +71,29 @@ class Engine:
         self._all: list[dict] = []
         self._all_lock = threading.Lock()
         self.resumed_count = len(self._cache)
-        if self._cache:
-            # Replay committed spend so the ceiling holds across resumes (not
-            # N× reset). Runs pre-pool, single-threaded — no _lock needed.
-            # Spend.tokens is a read-only @property; mutate the axes directly.
-            spend = self.budget._spend
-            for r in self._cache.values():
-                spend.input_tokens += int(r.get("input_tokens") or 0)
-                spend.output_tokens += int(r.get("output_tokens") or 0)
-                spend.usd += float(r.get("usd") or 0.0)
-                spend.calls += 1
+        self.blocks = blocks_mod.BlockStore(self.run_dir)
+        self._charged_blocks: set[tuple[str, str]] = set()
+        self._blocks_lock = threading.Lock()
+        # Replay committed spend so the ceiling holds across resumes (not
+        # N× reset). Runs pre-pool, single-threaded — no _lock needed.
+        # Spend.tokens is a read-only @property; mutate the axes directly.
+        spend = self.budget._spend
+        for r in self._cache.values():
+            spend.input_tokens += int(r.get("input_tokens") or 0)
+            spend.output_tokens += int(r.get("output_tokens") or 0)
+            spend.usd += float(r.get("usd") or 0.0)
+            spend.calls += 1
+        # Block charges are committed truth too (§11.4): replay them into spend
+        # and into the charged set so a rerun iteration never double-charges.
+        replayed_blocks = 0
+        for rec in self.journal.replay():
+            if rec.get("event") == "block_charged":
+                self._charged_blocks.add((rec["scope"], rec["sha256"]))
+                spend.input_tokens += int(rec.get("input_tokens") or 0)
+                replayed_blocks += 1
+        if self._cache or replayed_blocks:
             self.journal.append({"event": "budget_replay", "leaves": len(self._cache),
+                                 "blocks": replayed_blocks,
                                  "replayed_spend": spend.as_dict()})
         self._cancel = threading.Event()  # set by Ctrl+C / SIGTERM / deadline cascade
 
@@ -160,6 +174,7 @@ class Engine:
                 self._record(res, cached_hit=True)
                 return res
 
+        self._charge_blocks(req)
         est_in = max(1, len(req.prompt) // 4)
         est_out = req.max_tokens or 400
         est_usd = req.route.est_usd(est_in, est_out)
@@ -205,6 +220,12 @@ class Engine:
         except Exception as exc:
             res = _fail_result(req, f"executor: {exc}")
 
+        # Lever-1 measurement infra: persist what each leaf actually ingested,
+        # so the dedup rate is measured, not inferred from input-token floors.
+        res.input_sha256 = hashlib.sha256(req.prompt.encode("utf-8")).hexdigest()
+        res.input_chars = len(req.prompt)
+        res.block_refs = blocks_mod.refs_in(req.prompt)
+
         self.budget.commit(input_tokens=res.input_tokens,
                            output_tokens=res.output_tokens, usd=res.usd)
 
@@ -232,6 +253,21 @@ class Engine:
             cache_mod.store(ck, res.as_dict())
         self._record(res)
         return res
+
+    def _charge_blocks(self, req: LeafRequest) -> None:
+        """Charge each referenced shared block once per iteration scope (§6 L2),
+        not once per sibling. WAL-first: the charge is journaled before it is
+        committed, so a crash-resume replays committed truth exactly once."""
+        scope = blocks_mod.block_scope(req.phase)
+        for sha in blocks_mod.refs_in(req.prompt):
+            with self._blocks_lock:
+                if (scope, sha) in self._charged_blocks:
+                    continue
+                self._charged_blocks.add((scope, sha))
+            tokens = estimate_tokens(self.blocks.read(sha))
+            self._emit({"event": "block_charged", "scope": scope, "sha256": sha,
+                        "input_tokens": tokens})
+            self.budget.commit(input_tokens=tokens, output_tokens=0, usd=0.0)
 
     def _record(self, res: LeafResult, cached_hit: bool = False) -> None:
         with self._all_lock:

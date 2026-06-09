@@ -64,6 +64,9 @@ class LeafResult:
     required: bool = True
     error_kind: Optional[str] = None
     artifact_refs: list = field(default_factory=list)
+    input_sha256: str = ""                             # Lever-1: hash of the dispatched prompt
+    input_chars: int = 0
+    block_refs: list = field(default_factory=list)     # shared-block shas referenced by the prompt
 
     def as_dict(self) -> dict:
         return dict(self.__dict__)

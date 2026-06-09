@@ -292,4 +292,5 @@ def _accumulate(total: dict, delta: dict) -> None:
 def _leaf_summary(l: dict) -> dict:
     return {k: l.get(k) for k in (
         "leaf_id", "label", "phase", "status", "input_tokens", "output_tokens",
-        "usd", "error", "error_kind", "repair_attempts", "cached_hit")}
+        "usd", "error", "error_kind", "repair_attempts", "cached_hit",
+        "input_sha256", "input_chars", "block_refs")}

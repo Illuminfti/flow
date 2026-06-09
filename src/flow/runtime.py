@@ -26,6 +26,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from . import blocks as blocks_mod
 from . import router as router_mod
 from .budget import Budget
 from .ids import leaf_id as compute_leaf_id
@@ -189,6 +190,20 @@ class Workflow:
                 raise RuntimeError(f"local leaf {label} {res.status}: {res.error}")
             return None
         return res.value
+
+    # -- shared-context blocks (v2, plan §6 L1/L2) -------------------------
+    def block(self, text: str, *, summary_chars: int = blocks_mod.SUMMARY_CHARS) -> str:
+        """Store a shared context block once (sha256-addressed) and return the
+        ref envelope siblings embed instead of the full blob. The block is
+        charged to the budget once per iteration scope at first use, not once
+        per referencing sibling."""
+        return self._engine.blocks.put(text, summary_chars=summary_chars)["ref"]
+
+    def resolve_blocks(self, text: str) -> str:
+        """Expand block ref envelopes back to full content (on-demand
+        resolution for in-process consumers; CLI-agent backends read the
+        envelope's path directly)."""
+        return self._engine.blocks.resolve(text)
 
     # -- loop (v2) ---------------------------------------------------------
     def loop(self, *, spec: LoopSpec, step: Callable[["Workflow", dict], Any],
