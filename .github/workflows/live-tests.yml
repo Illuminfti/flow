@@ -15,9 +15,19 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: python -m pytest tests/test_live_resume.py -v
-  live-providers:
+  # The secrets context is not available in a job-level `if` — gate via a
+  # first job that exports the answer as an output instead.
+  creds:
     runs-on: ubuntu-latest
-    if: ${{ secrets.OPENAI_API_KEY != '' || secrets.OPENROUTER_API_KEY != '' }}
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - id: check
+        run: echo "present=${{ secrets.OPENAI_API_KEY != '' || secrets.OPENROUTER_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+  live-providers:
+    needs: creds
+    if: needs.creds.outputs.present == 'true'
+    runs-on: ubuntu-latest
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
