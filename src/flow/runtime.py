@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextvars
 import importlib.util
 import inspect
+import json
 from concurrent.futures import FIRST_COMPLETED, wait
 from dataclasses import dataclass
 from enum import Enum
@@ -332,6 +333,17 @@ def run_workflow(
 
     rid = run_id or new_run_id(slug)
     rdir = run_dir_for(rid)
+    # Resume: rehydrate args/budget from the persisted manifest when the caller
+    # omits them. A resume that re-runs the script with args=None crashes it,
+    # and a caller-drifted budget spec silently re-applies a different ceiling
+    # (observed: tool-202625-5382 resumed with 800000 against a 420000 manifest).
+    manifest_path = rdir / "manifest.json"
+    if manifest_path.exists():
+        prior = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if args is None:
+            args = prior.get("args")
+        if budget is None:
+            budget = prior.get("budget")
     sid = script_id or (script_path or getattr(run_fn, "__qualname__", "inline"))
 
     mod = None
@@ -392,8 +404,7 @@ def run_workflow(
     report = engine.report(final=final, status=status, finalization_error=finalization_error)
     if error:
         report["error"] = error
-    import json as _json
     Path(rdir / "run-report.json").write_text(
-        _json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8",
+        json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8",
     )
     return report

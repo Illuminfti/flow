@@ -69,6 +69,18 @@ class Engine:
         self._all: list[dict] = []
         self._all_lock = threading.Lock()
         self.resumed_count = len(self._cache)
+        if self._cache:
+            # Replay committed spend so the ceiling holds across resumes (not
+            # N× reset). Runs pre-pool, single-threaded — no _lock needed.
+            # Spend.tokens is a read-only @property; mutate the axes directly.
+            spend = self.budget._spend
+            for r in self._cache.values():
+                spend.input_tokens += int(r.get("input_tokens") or 0)
+                spend.output_tokens += int(r.get("output_tokens") or 0)
+                spend.usd += float(r.get("usd") or 0.0)
+                spend.calls += 1
+            self.journal.append({"event": "budget_replay", "leaves": len(self._cache),
+                                 "replayed_spend": spend.as_dict()})
         self._cancel = threading.Event()  # set by Ctrl+C / SIGTERM / deadline cascade
 
         if executor_kind == "process":
