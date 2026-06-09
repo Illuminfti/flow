@@ -207,12 +207,16 @@ class Workflow:
 
     # -- loop (v2) ---------------------------------------------------------
     def loop(self, *, spec: LoopSpec, step: Callable[["Workflow", dict], Any],
-             verify: Optional[Callable[["Workflow", dict], Any]] = None) -> dict:
+             verify: Optional[Callable[["Workflow", dict], Any]] = None,
+             gate_runner: Optional[Any] = None) -> dict:
         """Bounded iterate-to-goal envelope (plan §1/§8). Each iteration runs
-        ``step`` then ``verify`` as ordinary leaves; returns the LoopRun receipt."""
+        ``step`` then ``verify`` as ordinary leaves, then the spec's required
+        gates (deterministic tier first, verifier tier after); returns the
+        LoopRun receipt with its HandoffReport attached."""
         token = _CURRENT_PHASE.set(_CURRENT_PHASE.get())
         try:
-            return run_loop(self, spec=spec, step=step, verify=verify)
+            return run_loop(self, spec=spec, step=step, verify=verify,
+                            gate_runner=gate_runner)
         finally:
             _CURRENT_PHASE.reset(token)
 

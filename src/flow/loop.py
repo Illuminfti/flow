@@ -13,7 +13,11 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional, Sequence
 
 from . import router as router_mod
+from .gates import GateRunner, GoalContract, default_goal_contract
+from .handoff import build_handoff
 from .ids import stable_hash
+from .signatures import (FailureSignature, RepairRouter, is_stalled,
+                         signatures_from_record)
 
 _SPEND_AXES = ("input_tokens", "output_tokens", "usd", "calls")
 
@@ -29,9 +33,19 @@ class LoopSpec:
     goal: str
     max_iterations: int = 5
     budget: Optional[dict] = None              # loop-scoped ceiling (max_tokens/max_usd/max_calls)
-    required_gates: Sequence[str] = ()         # gate ids; GateRunner lands in WS-D
+    required_gates: Sequence[str] = ()         # gate ids run by GateRunner each iteration (WS-D)
     verifier_policy: Optional[dict] = None     # {"tier": ..., "must_differ_from_executor": bool}
     stop_conditions: Sequence[str] = ("goal_met", "no_progress", "budget_exhausted", "max_iterations")
+    stall_limit: int = 2                       # consecutive evidence-identical iterations → no_progress
+    goal_contract: Optional[GoalContract] = None  # default: all required gates pass (§5.1)
+    max_repairs_per_iteration: int = 1         # bounded RepairRouter retries (WS-E)
+
+    def contract(self) -> Optional[GoalContract]:
+        if self.goal_contract is not None:
+            return self.goal_contract
+        if self.required_gates:
+            return default_goal_contract(self.required_gates)
+        return None  # no gates, no contract → goal_met can never vacuously fire
 
     def identity(self) -> dict:
         return {
@@ -41,6 +55,10 @@ class LoopSpec:
             "required_gates": list(self.required_gates),
             "verifier_policy": self.verifier_policy,
             "stop_conditions": list(self.stop_conditions),
+            "stall_limit": self.stall_limit,
+            "goal_contract": (self.goal_contract.description
+                              if self.goal_contract is not None else None),
+            "max_repairs_per_iteration": self.max_repairs_per_iteration,
         }
 
     def spec_hash(self) -> str:
@@ -77,13 +95,15 @@ class LoopRun:
     loop_id: str
     goal: str
     spec_hash: str
-    status: str                # completed | exhausted | cancelled | failed
+    status: str                # completed | exhausted | stalled | cancelled | failed
     stop_reason: str
+    goal_met: bool
     iterations: int
     replayed: int
     candidate: Any
     spend: dict
     records: list
+    handoff: dict
 
     def as_dict(self) -> dict:
         return dict(self.__dict__)
@@ -123,6 +143,14 @@ class LoopLedger:
         self._emit("loop_stopped", stop_reason=stop_reason, status=status,
                    iterations=iterations, replayed=replayed, spend=spend)
 
+    def failure_signature(self, iteration: int, sig: "FailureSignature") -> None:
+        self._emit("failure_signature", iteration=iteration, **sig.as_dict())
+
+    def handoff_written(self, path: str, *, stop_reason: str,
+                        next_bounded_action: str) -> None:
+        self._emit("handoff_written", path=path, stop_reason=stop_reason,
+                   next_bounded_action=next_bounded_action)
+
     def verifier_identity_collision(self, verifier: Any, executor: Any) -> None:
         self._emit("verifier_identity_collision",
                    verifier={"provider": verifier.provider, "model": verifier.model},
@@ -135,14 +163,21 @@ class LoopLedger:
 def evaluate_stop(spec: LoopSpec, *, iteration: int, records: list,
                   loop_spend: dict, exhausted: bool, cancelled: bool) -> Optional[str]:
     """Deterministic stop precedence (§7.2): goal_met > max_iterations >
-    no_progress > budget_exhausted > cancelled. ``goal_met`` and ``no_progress``
-    are WS-E hooks; ``max_iterations`` and ``budget_exhausted`` are hard bounds
-    enforced regardless of ``spec.stop_conditions`` — a declared-bounded loop
-    cannot be configured unbounded."""
-    # goal_met: WS-E (GoalContract over gate results)
+    no_progress > budget_exhausted > cancelled. A pure function of the
+    iteration records — the same journal replays to the same ``stop_reason``
+    at the same iteration (invariant I3). ``max_iterations`` and
+    ``budget_exhausted`` are hard bounds enforced regardless of
+    ``spec.stop_conditions`` — a declared-bounded loop cannot be configured
+    unbounded."""
+    contract = spec.contract()
+    if ("goal_met" in spec.stop_conditions and contract is not None
+            and records and contract.satisfied(records[-1])):
+        return "goal_met"
     if iteration >= spec.max_iterations:
         return "max_iterations"
-    # no_progress: WS-E (FailureSignatureRegistry stall detector)
+    if ("no_progress" in spec.stop_conditions
+            and is_stalled(records, stall_limit=spec.stall_limit)):
+        return "no_progress"
     if exhausted:
         return "budget_exhausted"
     if cancelled:
@@ -152,7 +187,8 @@ def evaluate_stop(spec: LoopSpec, *, iteration: int, records: list,
 
 def run_loop(wf: Any, *, spec: LoopSpec,
              step: Callable[[Any, dict], Any],
-             verify: Optional[Callable[[Any, dict], Any]] = None) -> dict:
+             verify: Optional[Callable[[Any, dict], Any]] = None,
+             gate_runner: Optional[GateRunner] = None) -> dict:
     engine = wf._engine
     entry_phase = wf._phase
     loop_id = "loop-" + stable_hash(
@@ -163,6 +199,8 @@ def run_loop(wf: Any, *, spec: LoopSpec,
     ledger.loop_started(spec)
 
     tag = loop_id[5:11]
+    runner = gate_runner or GateRunner()
+    repair_router = RepairRouter()
     records: list[dict] = []
     prev: Any = None
     replayed = 0
@@ -178,7 +216,9 @@ def run_loop(wf: Any, *, spec: LoopSpec,
         else:
             rec, breached = _run_iteration(
                 wf, ledger=ledger, spec=spec, step=step, verify=verify,
-                n=n, prev=prev, entry_phase=entry_phase, tag=tag)
+                n=n, prev=prev, prev_record=records[-1] if records else None,
+                entry_phase=entry_phase, tag=tag,
+                runner=runner, repair_router=repair_router)
         records.append(rec)
         if rec.get("status") == "completed":
             prev = rec.get("candidate")
@@ -191,8 +231,20 @@ def run_loop(wf: Any, *, spec: LoopSpec,
             stop_reason = reason
             break
 
-    if stop_reason in ("goal_met", "max_iterations") and records and records[-1]["status"] == "completed":
+    goal_met = stop_reason == "goal_met"
+    contract = spec.contract()
+    if goal_met:
         status = "completed"
+    elif stop_reason == "max_iterations":
+        # With a contract declared, hitting the cap without meeting the goal is
+        # exhaustion, not success; a plain bounded loop keeps v1 semantics.
+        if contract is not None:
+            status = "exhausted"
+        else:
+            status = ("completed" if records and records[-1]["status"] == "completed"
+                      else "failed")
+    elif stop_reason == "no_progress":
+        status = "stalled"
     elif stop_reason == "budget_exhausted":
         status = "exhausted"
     elif stop_reason == "cancelled":
@@ -200,9 +252,21 @@ def run_loop(wf: Any, *, spec: LoopSpec,
     else:
         status = "failed"
     spend = {**loop_spend, "tokens": loop_spend["input_tokens"] + loop_spend["output_tokens"]}
+
+    run_id = engine.run_dir.name
+    handoff = build_handoff(
+        run_id=run_id, loop_id=loop_id, spec=spec, status=status,
+        stop_reason=stop_reason, goal_met=goal_met, records=records,
+        replayed=replayed, spend=spend,
+        budget_remaining=engine.budget.remaining())
+    handoff_ref = engine.journal.write_handoff(handoff.as_dict())
+    ledger.handoff_written(handoff_ref, stop_reason=stop_reason,
+                           next_bounded_action=handoff.next_bounded_action)
+
     run = LoopRun(loop_id=loop_id, goal=spec.goal, spec_hash=spec.spec_hash(),
-                  status=status, stop_reason=stop_reason, iterations=len(records),
-                  replayed=replayed, candidate=prev, spend=spend, records=records)
+                  status=status, stop_reason=stop_reason, goal_met=goal_met,
+                  iterations=len(records), replayed=replayed, candidate=prev,
+                  spend=spend, records=records, handoff=handoff.as_dict())
     ledger.loop_stopped(stop_reason=stop_reason, status=status,
                         iterations=len(records), replayed=replayed, spend=spend)
     return run.as_dict()
@@ -210,9 +274,13 @@ def run_loop(wf: Any, *, spec: LoopSpec,
 
 def _run_iteration(wf: Any, *, ledger: LoopLedger, spec: LoopSpec,
                    step: Callable, verify: Optional[Callable],
-                   n: int, prev: Any, entry_phase: str, tag: str) -> tuple[dict, bool]:
+                   n: int, prev: Any, prev_record: Optional[dict],
+                   entry_phase: str, tag: str,
+                   runner: GateRunner, repair_router: RepairRouter) -> tuple[dict, bool]:
     engine = wf._engine
-    ctx = {"goal": spec.goal, "iteration": n, "prev": prev}
+    ctx = {"goal": spec.goal, "iteration": n, "prev": prev,
+           "prev_gates": (prev_record or {}).get("gate_results") or {},
+           "prev_failures": (prev_record or {}).get("failures") or []}
     context_hash = stable_hash(ctx)
     ledger.iteration_started(n)
     spend_before = engine.budget.spend()
@@ -223,6 +291,7 @@ def _run_iteration(wf: Any, *, ledger: LoopLedger, spec: LoopSpec,
     candidate: Any = None
     verdict: Any = None
     failures: list[dict] = []
+    repairs = 0
     stage = "step"
     try:
         wf.phase(f"{entry_phase}/loop:{tag}/i{n}/step")
@@ -234,6 +303,31 @@ def _run_iteration(wf: Any, *, ledger: LoopLedger, spec: LoopSpec,
     except Exception as exc:
         status = "failed"
         failures.append({"stage": stage, "error": str(exc)})
+
+    gate_ctx = {"candidate": candidate, "verdict": verdict, "spec": spec,
+                "iteration": n}
+    gate_results: dict[str, dict] = {}
+    if spec.required_gates and status == "completed":
+        with engine._all_lock:
+            gate_ctx["leaves"] = [dict(l) for l in engine._all[mark:]]
+        gate_results = runner.run(spec.required_gates, gate_ctx)
+        # Bounded repair: a malformed verifier verdict gets one re-ask with the
+        # parse error attached (RepairRouter strategy "verifier_repair").
+        while (repairs < spec.max_repairs_per_iteration and verify is not None
+               and _verifier_repair_needed(gate_results, repair_router)):
+            repairs += 1
+            err = gate_results["verifier"].get("error")
+            try:
+                wf.phase(f"{entry_phase}/loop:{tag}/i{n}/verify-repair{repairs}")
+                verdict = verify(wf, {**ctx, "candidate": candidate,
+                                      "repair": err, "previous": verdict})
+            except Exception as exc:
+                failures.append({"stage": "verify_repair", "error": str(exc)})
+                break
+            gate_ctx["verdict"] = verdict
+            with engine._all_lock:
+                gate_ctx["leaves"] = [dict(l) for l in engine._all[mark:]]
+            gate_results = runner.run(spec.required_gates, gate_ctx)
 
     spend_after = engine.budget.spend()
     with engine._all_lock:
@@ -249,16 +343,28 @@ def _run_iteration(wf: Any, *, ledger: LoopLedger, spec: LoopSpec,
         loop_id=ledger.loop_id, iteration=n, status=status, context_hash=context_hash,
         inputs={"goal": spec.goal,
                 "prev_hash": stable_hash(prev) if prev is not None else None},
-        candidate=candidate, verifier_verdict=verdict, gate_results={},
+        candidate=candidate, verifier_verdict=verdict, gate_results=gate_results,
         leaves=[_leaf_summary(l) for l in leaves],
         artifact_refs=[ref for l in leaves for ref in (l.get("artifact_refs") or [])],
-        repairs=sum(int(l.get("repair_attempts") or 0) for l in leaves),
+        repairs=repairs + sum(int(l.get("repair_attempts") or 0) for l in leaves),
         failures=failures,
         spend={**delta, "tokens": delta["input_tokens"] + delta["output_tokens"]},
         elapsed_s=round(time.time() - started, 3),
     )
+    rec_dict = record.as_dict()
+    for sig in signatures_from_record(rec_dict):
+        ledger.failure_signature(n, sig)
     ledger.iteration_finished(record)
-    return record.as_dict(), breached
+    return rec_dict, breached
+
+
+def _verifier_repair_needed(gate_results: dict, router: RepairRouter) -> bool:
+    g = gate_results.get("verifier")
+    if not g or g.get("passed") or g.get("verdict") != "error":
+        return False
+    sig = FailureSignature(error_kind=str(g.get("error_kind") or "runtime_error"),
+                           message=str(g.get("error") or ""), gate_id="verifier")
+    return router.route(sig) == "verifier_repair"
 
 
 def _enforce_verifier_identity(spec: LoopSpec, ledger: LoopLedger) -> None:

@@ -116,6 +116,12 @@ class Journal:
         except Exception:
             return None
 
+    def write_handoff(self, payload: dict) -> str:
+        """Materialize a loop's HandoffReport (wf.loop, plan WS-G)."""
+        path = self.run_dir / "handoff-report.json"
+        self._atomic_write(path, payload)
+        return str(path.relative_to(self.run_dir))
+
     def snapshot_state(self, state: dict) -> None:
         """Periodic compacted snapshot (flock+fsync, workstream pattern)."""
         self._atomic_write(self.state_path, state)
