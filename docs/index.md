@@ -4,9 +4,10 @@ Start here when you need more than the README.
 
 ## Core guides
 
-- [Architecture](architecture.md): scheduler, leaf pool, journal, routing, resume.
+- [Architecture](architecture.md): scheduler, leaf pool, journal, routing, resume, v2 loop layer and block store.
+- [Loop envelope](loop.md): `wf.loop` full guide — spec fields, stop precedence, gates, goal contracts, stall detection, repair routing, handoff reports, crash-resume, verifier identity.
 - [CLI reference](cli.md): every command and the important flags.
-- [Python API](api.md): `run_workflow`, `wf.*`, tools, backends, and errors.
+- [Python API](api.md): `run_workflow`, `wf.*`, tools, backends, errors, and v2 exports.
 - [Configuration](config.md): providers, models, tiers, auth, budgets, config lookup.
 - [Backends](backends.md): built-in backends and custom backend registration.
 - [Subscriptions](subscriptions.md): OAuth and subscription-backed routes.

@@ -1,7 +1,7 @@
 ---
 name: flow
-description: Run dynamic multi-agent workflows with the `flow` engine — concurrent leaves, per-leaf cost-aware model routing (any provider, API key OR subscription/OAuth), JSON-schema-enforced output, transient-error retry, token/usd budgets, and crash-resumable runs. Use when a task wants fan-out + verification, deep research, large audits/migrations, judge panels, or qualitative sorting at scale — anything that benefits from concurrent, verified sub-agents instead of one linear context.
-version: 1.0.1
+description: Run dynamic multi-agent workflows with the `flow` engine — concurrent leaves, per-leaf cost-aware model routing (any provider, API key OR subscription/OAuth), JSON-schema-enforced output, transient-error retry, token/usd budgets, crash-resumable runs, bounded iterate-to-goal loops with acceptance gates + an independent verifier, and shared-context block dedup so wide fan-out doesn't breach token budgets. Use when a task wants fan-out + verification, deep research, large audits/migrations, judge panels, iterate-until-verified repair loops, or qualitative sorting at scale — anything that benefits from concurrent, verified sub-agents instead of one linear context.
+version: 2.0.0
 tags:
   [
     flow,
@@ -77,8 +77,41 @@ flow resume <run_id> myflow.py # after a crash — completed leaves are skipped
 `wf.agent(prompt, *, label, schema, tier, model, provider, required, max_tokens, timeout)` ·
 `wf.local(fn, *args)` · `wf.parallel([thunk,...])` · `wf.pipeline(items, *stages)` ·
 `wf.workflow(child_fn, inputs)` · `wf.phase(name)` · `wf.log/notify` ·
-`wf.spend()/remaining()/has_headroom()`. Build a list of zero-arg lambdas for
-`parallel`; bind loop vars with defaults (`lambda d=d: ...`).
+`wf.spend()/remaining()/has_headroom()` · `wf.block(text)` / `wf.resolve_blocks(text)` ·
+`wf.loop(spec=LoopSpec(...), step=..., verify=...)`. Build a list of zero-arg lambdas
+for `parallel`; bind loop vars with defaults (`lambda d=d: ...`).
+
+## v2: blocks + bounded loops (the big levers)
+
+**Shared-context dedup** — store a shared blob once, embed the ref in every sibling
+prompt; the budget charges the block once per scope instead of once per sibling
+(wide fan-out was measured 53–89% redundant input without this):
+
+```python
+ref = wf.block(args["big_context"])          # sha256-addressed, stored once
+wf.agent(f"Analyze lens X.\n\nContext: {ref}", ...)   # sibling embeds the ref
+```
+
+**Iterate-to-goal loop** — bounded, crash-resumable, gate-accepted:
+
+```python
+from flow import LoopSpec
+return wf.loop(
+    spec=LoopSpec(goal="produce a verified synthesis", max_iterations=3,
+                  required_gates=["schema", "verifier"], stall_limit=2,
+                  verifier_policy={"tier": "verify", "must_differ_from_executor": True}),
+    step=lambda wf, ctx: wf.agent(..., tier="quality"),          # ctx has prev + prev_gates
+    verify=lambda wf, ctx: wf.agent(f"Adversarially review: {ctx['candidate']}. "
+                                    'Return {"verdict":"accept"|"reject","issues":[...]}',
+                                    tier="verify",
+                                    schema={"type": "object", "required": ["verdict"]}))
+```
+
+Stops deterministically: goal_met > max_iterations > no_progress (stall) >
+budget_exhausted > cancelled. Every stop writes `handoff-report.json` with a
+bounded `next_bounded_action`; completed iterations never rerun after a crash;
+a required verifier that resolves to the executor's (provider, model) fails
+closed (`VerifierIdentityError`) — no self-grading. Details: `docs/loop.md`.
 
 ## Patterns (when to reach for flow)
 

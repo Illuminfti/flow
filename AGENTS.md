@@ -45,7 +45,7 @@ flow trace <run_id>          # per-leaf model / cost / latency
 flow resume <run_id> path/to/workflow.py   # after a crash
 ```
 
-A workflow script defines `run(wf, args)`; the API is in the README and `examples/`. Pipeline stages may be `stage(cur)`, `stage(cur, item)`, `stage(cur, item, idx)`, or `stage(*args)`; `cur` is the current value, `item` is the original input, and `idx` is the zero-based input index. JSON Schema dicts work without extras using a limited fallback validator when `jsonschema` is absent; install the full extras for complete JSON Schema enforcement. Pydantic model schemas require `pydantic`.
+A workflow script defines `run(wf, args)`; the API is in the README and `examples/`. v2 adds `wf.block(text)` (share one context blob across fan-out siblings by ref — charged once, not once per sibling) and `wf.loop(spec=LoopSpec(...), step=..., verify=...)` (bounded iterate-to-goal with acceptance gates, stall detection, an identity-distinct verifier, and a handoff report on every stop) — see `docs/loop.md`. Pipeline stages may be `stage(cur)`, `stage(cur, item)`, `stage(cur, item, idx)`, or `stage(*args)`; `cur` is the current value, `item` is the original input, and `idx` is the zero-based input index. JSON Schema dicts work without extras using a limited fallback validator when `jsonschema` is absent; install the full extras for complete JSON Schema enforcement. Pydantic model schemas require `pydantic`.
 
 ## 5. Register flow as a tool for your host agent
 

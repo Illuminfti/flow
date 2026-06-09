@@ -1,5 +1,83 @@
 # Changelog
 
+## 2.0.0 — bounded loop envelope (2026-06-09)
+
+The v1 DAG API is unchanged and regression-locked. v2 adds a new execution layer
+layered on top of it.
+
+**Measured performance contract** (replaying real failed v1 production runs
+under their unchanged token ceilings, live): a 25-leaf research fan-out that
+died at 906,313/900,000 tokens under v1 completed under v2 at 205,073 total
+(input 822,120 → 135,619, −83.5%) with the loop stopping on `goal_met` via an
+identity-distinct verifier; a second workload that breached its 300k ceiling
+completed likewise. Shared-context dedup measured ≥70% from persisted per-leaf
+input hashes.
+
+- **`wf.loop(spec, step, verify, gate_runner)` — iterate-to-goal envelope.**
+  Each iteration runs `step` then `verify` as ordinary DAG leaves (leaf-level
+  cache, resume, and budget gating all apply). Returns a `LoopRun` receipt dict
+  carrying `goal_met`, `stop_reason`, `status`, `iterations`, `candidate`,
+  `spend`, `records`, and the attached `HandoffReport`.
+
+- **`LoopSpec` — declarative loop configuration.**
+  Fields: `goal`, `max_iterations`, `budget` (loop-scoped ceiling), `required_gates`,
+  `verifier_policy`, `stop_conditions`, `stall_limit`, `goal_contract`,
+  `max_repairs_per_iteration`.
+
+- **Tiered acceptance gates + `GoalContract` (gates.py).** `GateRunner` runs
+  required gates in tier order: deterministic gates (`"schema"`, `"artifact"`)
+  run first and are free; verifier-tier (`"verifier"`) is skipped — not charged —
+  when a required deterministic gate has already failed. `default_goal_contract`
+  requires all named gates to pass; a loop with no gates and no contract can
+  never vacuously fire `goal_met`. Custom gates via `runner.register()`.
+
+- **Deterministic stop precedence.** Order: `goal_met` > `max_iterations` >
+  `no_progress` > `budget_exhausted` > `cancelled`. A pure function of iteration
+  records — the same journal always replays to the same `stop_reason` at the same
+  iteration (invariant I3).
+
+- **Failure signatures + stall detection (signatures.py).** `FailureSignature`
+  fingerprints a recurring failure as `(error_kind, normalized_message, gate_id)`.
+  `is_stalled()` fires `no_progress` when `stall_limit` consecutive
+  evidence-identical (same candidate + same signatures + same gate shape)
+  unaccepted iterations have elapsed, stopping the loop before the token wall.
+  `FailureSignatureRegistry` aggregates counts deterministically from iteration
+  records.
+
+- **Repair routing (signatures.py).** `RepairRouter` routes a malformed verifier
+  verdict to one bounded re-ask (`verifier_repair`) strategy, bounded by
+  `max_repairs_per_iteration`. Budget breaches are never repaired by retrying.
+
+- **`HandoffReport` (handoff.py).** Every loop stop — goal met, exhausted,
+  stalled, cancelled, failed — writes `handoff-report.json` with a verified /
+  rejected iteration split, top failure signatures, spend, `budget_remaining`,
+  and `next_bounded_action` (a concrete bounded next step, e.g. a `flow resume`
+  command). The consumer never receives a bare `failed` status.
+
+- **Shared-context block store + artifact-ref dataflow (blocks.py).** `wf.block(text)`
+  stores a shared blob once (sha256-addressed) and returns a ref envelope. Siblings
+  embed the ref instead of the full blob; the block is charged to the budget once
+  per iteration scope, not once per sibling. `wf.resolve_blocks(text)` expands
+  envelopes on demand. `dedup_report(run_dir)` measures the saved re-ingestion
+  from persisted per-leaf input hashes (real-world runs: 53–89% redundant input
+  eliminated).
+
+- **Budget replay on resume.** At engine init, committed leaf spend and block
+  charges are rehydrated from the journal so the ceiling is enforced correctly
+  across N crash-resume cycles (≤1× ceiling, not N×). WAL event `budget_replay`.
+
+- **Verifier identity enforcement.** `verifier_policy={"must_differ_from_executor": True}`
+  fails closed with `VerifierIdentityError` at loop start when the verifier
+  resolves to the executor's `(provider, model)`. Never silently self-grades.
+  WAL event `verifier_identity_collision`.
+
+- **Finalize-status fix.** All leaves completed + finalization raises → status is
+  `completed_with_warnings`, never a bare `failed` with `error=None`.
+
+- **New public exports:** `GateResult`, `GateRunner`, `GoalContract`,
+  `default_goal_contract`, `HandoffReport`, `FailureSignature`,
+  `FailureSignatureRegistry`, `RepairRouter`.
+
 ## 1.3.0 — visual run card (2026-06-06)
 
 - **`progress.card_html(run_id)` + `progress.render_card(run_id)`** — a self-contained dark

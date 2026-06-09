@@ -69,3 +69,80 @@ Register tools with `register_tool(ToolDefinition(...))`, then grant by name per
 ## Custom backends
 
 Use `register_backend(kind, builder)` to add a provider implementation. See [backends.md](backends.md).
+
+## `wf.loop` (v2)
+
+```python
+from flow.loop import LoopSpec
+
+result = wf.loop(
+    spec=LoopSpec(
+        goal="produce a valid section",
+        max_iterations=5,
+        budget={"max_tokens": 50000},   # loop-scoped ceiling, independent of run budget
+        required_gates=["schema", "verifier"],
+        verifier_policy={"tier": "quality", "must_differ_from_executor": True},
+        stop_conditions=("goal_met", "no_progress", "budget_exhausted", "max_iterations"),
+        stall_limit=2,
+        goal_contract=None,             # None → default_goal_contract(required_gates)
+        max_repairs_per_iteration=1,
+    ),
+    step=step_fn,                       # Callable[[Workflow, dict], Any]
+    verify=verify_fn,                   # Optional[Callable[[Workflow, dict], Any]]
+    gate_runner=None,                   # Optional[GateRunner]; default GateRunner() used when None
+)
+# result is a LoopRun receipt dict:
+# result["goal_met"], result["stop_reason"], result["status"],
+# result["candidate"], result["iterations"], result["spend"],
+# result["records"], result["handoff"]
+```
+
+`step` and `verify` receive a context dict. Key fields: `goal`, `iteration`,
+`prev`, `prev_gates`, `prev_failures`, `candidate` (verify only),
+`repair` + `previous` (verify repair turn only).
+
+Returns a `LoopRun` dict. `result["handoff"]` is a `HandoffReport` dict with
+`next_bounded_action`, `verified`, `rejected`, `failure_signatures`,
+`budget_remaining`. The same report is written to `handoff-report.json` in the
+run dir.
+
+Full guide: [loop.md](loop.md).
+
+## `wf.block` / `wf.resolve_blocks` (v2)
+
+```python
+# Store shared context once; returns a ref envelope string.
+ref = wf.block(text, summary_chars=240)
+
+# Embed ref in prompts to siblings — budget charged once per iteration scope.
+result = wf.agent(f"Context: {ref}\n\nDo the work.", label="leaf")
+
+# Expand ref envelopes back to full content (in-process consumers).
+full_text = wf.resolve_blocks(ref)
+```
+
+`wf.block` is sha256-addressed and idempotent. CLI-agent backends read the
+envelope's embedded path directly; in-process consumers call `wf.resolve_blocks`.
+`dedup_report(run_dir)` measures the saved re-ingestion across a run.
+
+## New public exports (v2)
+
+```python
+from flow import (
+    GateResult,
+    GateRunner,
+    GoalContract,
+    default_goal_contract,
+    HandoffReport,
+    FailureSignature,
+    FailureSignatureRegistry,
+    RepairRouter,
+)
+```
+
+`GateRunner.register(gate_id, fn, *, tier="deterministic")` — add a custom gate.
+`default_goal_contract(required_gates)` — returns a `GoalContract` that requires
+all named gates to pass; never vacuously fires with an empty gate list.
+`FailureSignatureRegistry.from_records(records)` — rebuild deterministically from
+iteration records. `RepairRouter(overrides={})` — extend or override the
+`error_kind → strategy` table.
