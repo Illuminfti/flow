@@ -5,12 +5,13 @@
 ## Runtime layers
 
 1. **Workflow script**: a Python module exposing `run(wf, args)`.
-2. **Workflow API**: `wf.agent`, `wf.local`, `wf.parallel`, `wf.pipeline`, `wf.workflow`.
+2. **Workflow API**: `wf.agent`, `wf.code`, `wf.local`, `wf.parallel`, `wf.pipeline`, `wf.workflow`.
 3. **Orchestration pool**: runs Python thunks concurrently.
 4. **Router**: chooses a route from tier, model, provider, backend, capabilities, and cost.
-5. **Leaf pool**: executes model, shell, or local leaves.
-6. **Journal**: records run events and terminal leaf results.
-7. **Progress views**: `trace`, `status`, reports, and run cards.
+5. **Leaf pool**: executes model, shell, agent, or local leaves.
+6. **Worktree layer**: isolates agent leaves in detached git worktrees; captures change evidence as patch artifacts.
+7. **Journal**: records run events and terminal leaf results.
+8. **Progress views**: `trace`, `status`, `watch`, reports, and run cards.
 
 ## Leaf identity
 
@@ -25,6 +26,44 @@ Cancellation is cooperative. Ctrl+C, SIGTERM, or a deadline sets the run cancel 
 ## Resume model
 
 Resume is leaf-level, not a full graph snapshot. The script is executed again, but completed leaves with matching identities are returned from the journal instead of recomputed. This keeps the implementation small, inspectable, and robust across process crashes.
+
+## v3: agent_cli backend, worktree layer, session continuation
+
+Three additions in v3, each layered on the v1/v2 primitives.
+
+**`agent_cli` backend.** `wf.code` resolves to the `agent_cli` backend via a
+`Route` with `backend="agent_cli"`. `AgentCLIBackend` is a dataclass that holds
+harness config (harness, model, sandbox, allowed_tools, skip_permissions,
+system_prompt, cmd_template, bin, schema_file, continue_id, transcript_path)
+and dispatches to `_run_codex`, `_run_claude`, or `_run_generic`. `stdin` is
+detached (`subprocess.DEVNULL`) on all harness calls — CLI agents read non-TTY
+stdin as additional input and hang under a runner otherwise. The full raw stream
+is appended to `transcript_path` after every call; transcript failures are
+silently swallowed (observability, not data).
+
+**Worktree isolation.** `scheduler.submit_leaf` detects `req.isolation ==
+"worktree"` and `req.route.backend == "agent_cli"`, then calls
+`worktree.prepare(workspace, run_dir/worktrees/<leaf_id[:16]>)` before
+dispatching and `worktree.finalize(workspace, wt_path, patch_file)` after.
+`finalize` stages all changes with `git add -A`, diffs with `--binary --cached`,
+writes the patch to `run_dir/artifacts/<leaf_id[:16]>.patch`, removes the
+worktree, and returns `{changed, patch, files}`. The relative patch path is
+stored on `LeafResult.patch`; the full path is reconstructed from `run_dir`.
+`git worktree add/remove` calls are serialized within-process via `_GIT_LOCK`.
+
+**Session continuation.** `AgentCLIBackend.session_id` is set from the harness
+result after the first call. Repair turns (schema enforcement) and explicit
+`continue_id` chains both set `resume_id = session_id or continue_id` before
+building the argv — codex prepends `exec resume <thread_id>`, claude appends
+`--resume <session_id>`. `continue_id` is folded into the leaf identity hash
+via `stable_hash({"agent", "workspace", "isolation", "continue_id"})`, so
+chained leaves are separate journal entries.
+
+**`reserve_tokens` budget floor.** `scheduler.submit_leaf` uses
+`max(est_in, reserve_tokens - est_out)` as the input estimate when
+`req.reserve_tokens > 0`, ensuring the budget gate sees a realistic floor before
+the harness launches. Real spend is committed from harness result tokens after
+the run.
 
 ## v2: loop layer, block store, budget replay
 

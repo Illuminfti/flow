@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.0.0 — agentic leaves: full coding agents as leaf work (2026-06-10)
+
+The v1 DAG API and v2 loop/block API are unchanged and regression-locked. v3
+adds one new primitive — `wf.code` — that makes each leaf a full CLI coding
+agent (Codex, Claude Code, or any harness) that can read/edit files, run
+commands, and own a workspace, while staying inside the engine's budget gate,
+crash-resume journal, and schema enforcement.
+
+- **`wf.code(prompt, *, agent, label, workspace, isolation, schema, continue_id, reserve_tokens, timeout, required)` — agentic leaf.** Dispatches a task to a configured CLI coding agent harness. Returns a receipt dict: `value` (schema-parsed final answer), `text`, `session_id` (continuation handle), `patch` (worktree change evidence when `isolation="worktree"`), `workspace`, `leaf_id`, `agent`, `spend` (`{input_tokens, output_tokens, usd}`).
+
+- **`agent_cli` backend — three harness adapters.** `codex`: runs `codex exec --json`; sandbox levels map to `-s read-only|workspace-write` or the explicit `--dangerously-bypass-approvals-and-sandbox` bypass; native `--output-schema` when the leaf carries a JSON schema; continuation via `codex exec resume <thread_id>`. `claude`: runs `claude -p --output-format json`; tool surface via `--allowedTools` or the explicit `--dangerously-skip-permissions` bypass; real `total_cost_usd` from the result envelope; continuation via `--resume <session_id>`. `generic`: any argv `cmd_template` with `{prompt}`/`{workspace}` placeholders. Full harness transcripts persisted to `run_dir/agents/<leaf_id>.transcript.jsonl`.
+
+- **Worktree isolation — `isolation="worktree"`.** Each agent leaf gets a detached `git worktree` of the target repo; changes come back as a patch artifact (`run_dir/artifacts/<leaf_id>.patch`) and a `patch` evidence dict `{changed, patch, files}`; the worktree is removed after. The live repo working tree is never mutated. Parallel agents on the same repo are safe: each runs in its own isolated worktree.
+
+- **Session continuation + continuation-based schema repair.** Pass `continue_id=receipt["session_id"]` to chain a follow-up leaf into an existing harness session instead of starting fresh. Schema repair for agent leaves reuses the session (cheap continuation turn) rather than re-running the whole task from scratch.
+
+- **`reserve_tokens` — budget floor before harness launch.** Agent leaves ingest far more than their prompt (repo context, tool output). `reserve_tokens` tells the budget gate the minimum tokens to reserve before the harness is invoked; the real spend is committed from actual usage after. Default: 30 000 (configurable per agent in `agents:`).
+
+- **Transcripts.** The full harness JSONL/JSON stream is appended to `run_dir/agents/<leaf_id>.transcript.jsonl` after every run, so every agentic decision is auditable offline.
+
+- **`agents:` config section.** All agent harness behavior lives in config, not per-leaf code. Keys per agent entry: `harness` (codex|claude|generic), `model`, `bin` (harness executable override), `sandbox` (codex), `allowed_tools` / `skip_permissions` (claude), `system_prompt`, `cmd_template` (generic), `reserve_tokens`, `timeout_s`. Example: `{"coder": {"harness": "codex", "sandbox": "workspace-write"}, "reviewer": {"harness": "claude", "model": "sonnet", "allowed_tools": ["Read", "Grep", "Glob"]}}`.
+
+- **`flow watch <run_id>` — live progress** (being added in parallel). Streams engine events to the terminal as leaves complete; replaces polling `flow status` for long agentic runs.
+
 ## 2.0.0 — bounded loop envelope (2026-06-09)
 
 The v1 DAG API is unchanged and regression-locked. v2 adds a new execution layer

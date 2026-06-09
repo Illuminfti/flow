@@ -70,6 +70,33 @@ Register tools with `register_tool(ToolDefinition(...))`, then grant by name per
 
 Use `register_backend(kind, builder)` to add a provider implementation. See [backends.md](backends.md).
 
+## `wf.code` (v3)
+
+```python
+receipt = wf.code(
+    prompt,
+    *,
+    agent="coder",        # name of the agents: config entry
+    label=None,           # leaf label for traces/resume
+    workspace=None,       # cwd for the harness; defaults to os.getcwd()
+    isolation=None,       # "" (default) or "worktree"
+    schema=None,          # JSON Schema dict for the final answer
+    continue_id="",       # session_id from a prior receipt → resume that session
+    reserve_tokens=None,  # override agents.<name>.reserve_tokens for this leaf
+    timeout=None,         # override agents.<name>.timeout_s for this leaf
+    required=True,        # False → return None on failure instead of raising
+)
+```
+
+Returns a receipt dict: `value` (schema-parsed answer), `text`, `session_id`
+(continuation handle), `patch` (`{changed, files, patch}` — populated when
+`isolation="worktree"`), `workspace`, `leaf_id`, `agent`, `spend`
+(`{input_tokens, output_tokens, usd}`).
+
+Agents are configured in the `agents:` config section — harness, sandbox,
+allowed_tools, reserve_tokens, timeout_s, bin, system_prompt, cmd_template.
+See [`agents.md`](agents.md) for the full reference.
+
 ## `wf.loop` (v2)
 
 ```python

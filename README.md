@@ -2,11 +2,12 @@
 
 # flow
 
-### Your code orchestrates. Models do bounded work. Everything survives.
+### Your code orchestrates. Models — and full coding agents — do bounded work. Everything survives.
 
-**A tiny Python runtime for multi-model LLM workflows — concurrent, budgeted,
-schema-validated, crash-resumable, and able to iterate until an independent
-verifier accepts the result.**
+**A tiny Python runtime for multi-model LLM workflows and agentic coding tasks — concurrent,
+budgeted, schema-validated, crash-resumable, able to iterate until an independent verifier
+accepts the result, and able to fan out full CLI coding agents into isolated workspaces
+with patch evidence.**
 
 [![tests](https://github.com/Illuminfti/flow/actions/workflows/tests.yml/badge.svg)](https://github.com/Illuminfti/flow/actions/workflows/tests.yml)
 [![install smoke](https://github.com/Illuminfti/flow/actions/workflows/install-smoke.yml/badge.svg)](https://github.com/Illuminfti/flow/actions/workflows/install-smoke.yml)
@@ -21,23 +22,26 @@ verifier accepts the result.**
 
 ## What is this?
 
-You write one Python function. It fans work out to LLMs, checks their answers,
-and combines the results. `flow` makes that function **operationally safe**:
-every model call runs concurrently on the cheapest capable model, must return
-valid JSON (malformed output gets self-repaired), counts against a hard
-token/dollar budget, and is journaled to disk — kill the process at any point
-and `flow resume` picks up exactly where it died, without re-paying for
-finished work.
+You write one Python function. It fans work out to LLMs — and, in v3, to full
+CLI coding agents (Codex, Claude Code, any harness) — checks their answers, and
+combines the results. `flow` makes that function **operationally safe**: every
+leaf (model call or agentic task) runs concurrently, must return valid JSON
+(malformed output gets self-repaired), counts against a hard token/dollar
+budget, and is journaled to disk — kill the process at any point and
+`flow resume` picks up exactly where it died, without re-paying for finished
+work. Coding agents run in isolated git worktrees and hand back patch artifacts,
+not live mutations.
 
 ```mermaid
 flowchart LR
-    YOU["your Python<br/>run(wf, args)"] -->|"wf.agent(...) × N"| ENGINE
+    YOU["your Python<br/>run(wf, args)"] -->|"wf.agent(...) × N<br/>wf.code(...) × N"| ENGINE
     subgraph ENGINE["flow runtime"]
         direction LR
-        R["router<br/>cheapest capable model"] --> B["budget gate<br/>tokens · $ · calls · deadline"]
+        R["router<br/>cheapest capable model<br/>or configured agent"] --> B["budget gate<br/>tokens · $ · calls · deadline"]
         B --> X["concurrent execution<br/>+ schema validation<br/>+ self-repair"]
     end
     ENGINE --> M1["GPT / Claude / DeepSeek /<br/>Ollama / any CLI / local fn"]
+    ENGINE --> A1["Codex CLI ($0)<br/>Claude Code<br/>any agent harness"]
     ENGINE --> J[("journal<br/>(crash-proof)")]
     J -.->|"flow resume"| ENGINE
 ```
@@ -47,15 +51,16 @@ Any model, any provider — API key **or** the subscriptions you already pay for
 
 ## Why you'd want it
 
-| You want to…                                      | flow gives you                                                                                                             |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Fan out 20 checks / lenses / files at once        | `wf.parallel`, `wf.pipeline` — real concurrency, per-leaf failure policy                                                   |
-| Trust model output                                | JSON Schema enforced at every leaf; bad output is auto-repaired with the exact validation error, then fails loudly         |
-| Not wake up to a $400 bill                        | Hard budgets (tokens, USD, calls, deadline) enforced **before** each call — and still enforced across crash-restarts       |
-| Keep big shared context from being billed N times | `wf.block`: store it once, fan-out siblings get a reference (wide fan-outs measured 53–89% redundant without this)         |
-| Iterate until the result is actually good         | `wf.loop`: bounded retry-until-verified, with acceptance gates and a **different model as the verifier** — no self-grading |
-| Survive crashes, reboots, rate-limit deaths       | fsync'd write-ahead journal; `flow resume` skips all completed work                                                        |
-| See what happened                                 | `flow trace`: per-leaf model, cost, latency, retries, repairs                                                              |
+| You want to…                                          | flow gives you                                                                                                                     |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Fan out 20 checks / lenses / files at once            | `wf.parallel`, `wf.pipeline` — real concurrency, per-leaf failure policy                                                           |
+| Trust model output                                    | JSON Schema enforced at every leaf; bad output is auto-repaired with the exact validation error, then fails loudly                 |
+| Not wake up to a $400 bill                            | Hard budgets (tokens, USD, calls, deadline) enforced **before** each call — and still enforced across crash-restarts               |
+| Keep big shared context from being billed N times     | `wf.block`: store it once, fan-out siblings get a reference (wide fan-outs measured 53–89% redundant without this)                 |
+| Iterate until the result is actually good             | `wf.loop`: bounded retry-until-verified, with acceptance gates and a **different model as the verifier** — no self-grading         |
+| Survive crashes, reboots, rate-limit deaths           | fsync'd write-ahead journal; `flow resume` skips all completed work                                                                |
+| See what happened                                     | `flow trace`: per-leaf model, cost, latency, retries, repairs                                                                      |
+| Fan out real coding agents to mutate code in parallel | `wf.code` + `isolation="worktree"`: N agents run in isolated worktrees, changes come back as patch artifacts — live repo untouched |
 
 **Skip it** for one-shot prompts and deterministic ETL — workflows multiply
 calls; always set a budget.
@@ -201,6 +206,101 @@ the dedup rate is **measured** from persisted per-leaf input hashes
 completed at 205,073 total (input 822,120 → 135,619, **−83.5%**), with the
 loop stopping on `goal_met` via an independent verifier.
 
+## Agentic leaves — `wf.code` (v3)
+
+v3 makes each leaf a **full CLI coding agent** — Codex, Claude Code, or any
+configured harness — that uses its own tools (read/edit files, run commands,
+own a workspace) and returns a receipt with the final answer, real token spend,
+a continuation handle, and patch evidence when run in an isolated worktree.
+Everything stays inside the engine's budget gate, crash-resume journal, and
+schema enforcement.
+
+```mermaid
+flowchart LR
+    YOU["wf.parallel([<br/>  wf.code(task_A, isolation='worktree'),<br/>  wf.code(task_B, isolation='worktree'),<br/>  wf.code(task_C, isolation='worktree'),<br/>])"] --> WT
+    subgraph WT["worktree isolation"]
+        direction TB
+        W1["detached worktree A"] --> A1["agent A<br/>(Codex / Claude / …)"]
+        W2["detached worktree B"] --> A2["agent B"]
+        W3["detached worktree C"] --> A3["agent C"]
+    end
+    A1 --> P1["patch artifact A<br/>{changed, files, patch}"]
+    A2 --> P2["patch artifact B"]
+    A3 --> P3["patch artifact C"]
+    P1 & P2 & P3 --> R["review / merge step<br/>(your code)"]
+    R -.->|"live repo<br/>never touched"| REPO[("repo")]
+```
+
+**Real example** (from `tests/test_live_agents.py`):
+
+```python
+VERDICT = {"type": "object", "required": ["verdict"]}
+
+def run(wf, args):
+    wf.phase("build")
+    return wf.code(
+        "Create fizzbuzz.py with a fizzbuzz(n) function. "
+        'Reply with JSON {"verdict": "done"}.',
+        agent="coder", workspace=str(args["repo"]),
+        isolation="worktree", schema=VERDICT, label="fizzbuzz")
+```
+
+`wf.code` returns a receipt dict:
+
+```python
+{
+    "value":      {"verdict": "done"},   # schema-parsed final answer
+    "text":       "...",                 # raw harness output
+    "session_id": "thread-abc",          # continuation handle
+    "patch":      {"changed": True,      # worktree evidence
+                   "files": ["fizzbuzz.py"],
+                   "patch": "artifacts/abcd1234.patch"},
+    "workspace":  "/path/to/worktree",
+    "leaf_id":    "...",
+    "agent":      "coder",
+    "spend":      {"input_tokens": 12400, "output_tokens": 820, "usd": 0.0},
+}
+```
+
+**Session continuation** — chain leaves without re-running from scratch:
+
+```python
+first  = wf.code("start the work", agent="coder", workspace=ws, label="step1")
+follow = wf.code("now finish it",  agent="coder", workspace=ws, label="step2",
+                 continue_id=first["session_id"])
+```
+
+**Config** — all harness behavior lives in `agents:`, not per-leaf code:
+
+```yaml
+agents:
+  coder:
+    harness: codex
+    sandbox: workspace-write # read-only | workspace-write | danger-full-access
+    reserve_tokens: 30000
+    timeout_s: 600
+  reviewer:
+    harness: claude
+    model: sonnet
+    allowed_tools: [Read, Grep, Glob]
+    reserve_tokens: 30000
+    timeout_s: 600
+```
+
+**vs Claude Code Workflow** — honest comparison:
+
+|                                     | flow `wf.code`                               | Claude Code Workflow |
+| ----------------------------------- | -------------------------------------------- | -------------------- |
+| Vendor                              | any (codex=$0, claude, generic)              | Claude only          |
+| Pre-spend budget gate               | yes — SIGKILL-proof, replays across restarts | varies               |
+| Worktree isolation + patch evidence | yes                                          | no                   |
+| Parallel agent mutation (same repo) | safe (isolated worktrees)                    | not designed for it  |
+| Crash resume                        | yes — completed agent leaf never reruns      | session-bound        |
+| Identity-distinct verification      | yes (`wf.loop` verifier)                     | manual               |
+| Interactive UI                      | `flow watch <run_id>` (live progress)        | richer built-in UI   |
+
+Full guide: [`docs/agents.md`](docs/agents.md).
+
 ## How a single call actually runs
 
 ```mermaid
@@ -230,6 +330,8 @@ resume.
 ```python
 wf.agent(prompt, *, label, schema, tier, model, provider, backend,
          max_tokens, timeout, tools, tool_approval_gates, required=True)
+wf.code(prompt, *, agent, label, workspace, isolation, schema,         # v3: agentic leaf
+        continue_id, reserve_tokens, timeout, required=True)
 wf.local(fn, *args)                      # deterministic Python as a leaf
 wf.parallel([thunk, ...])                # modes: lenient | fail_fast | collect_errors
 wf.pipeline(items, stage1, stage2, ...)  # per-item flow, no barriers
@@ -247,6 +349,7 @@ flow run workflow.py --args '{...}' --budget '{"max_usd":1}'
 flow run --nl "<task>"            # model authors the workflow, flow validates + runs it
 flow resume <run_id> workflow.py  # finish a crashed run, completed work is free
 flow trace <run_id>               # per-leaf model/cost/latency/retries/repairs
+flow watch <run_id>               # v3: live progress as leaves complete
 flow author / list / status / doctor / self-test / init
 ```
 
@@ -258,6 +361,7 @@ flow author / list / status / doctor / self-test / init
 | `anthropic_sdk` | Claude (native SDK)                                                         | yes          |
 | `codex`         | ChatGPT-subscription Codex route ($0 with ChatGPT Pro)                      | fails closed |
 | `shell_cmd`     | any authenticated CLI — Claude Code, local models, custom bridges           | fails closed |
+| `agent_cli`     | full CLI coding agent harnesses (codex/claude/generic) via `wf.code`        | agent-owned  |
 | `local`         | plain Python functions                                                      | n/a          |
 
 Models, tiers, and pricing are pure config — one JSON/YAML file, no code
@@ -290,6 +394,7 @@ containment boundary. Details: [`SECURITY.md`](SECURITY.md) ·
 ## Docs
 
 [`docs/index.md`](docs/index.md) — map ·
+[`docs/agents.md`](docs/agents.md) — agentic leaves (v3) ·
 [`docs/loop.md`](docs/loop.md) — loop envelope ·
 [`docs/architecture.md`](docs/architecture.md) — internals ·
 [`docs/api.md`](docs/api.md) — Python API ·

@@ -1,7 +1,7 @@
 ---
 name: flow
-description: Run dynamic multi-agent workflows with the `flow` engine — concurrent leaves, per-leaf cost-aware model routing (any provider, API key OR subscription/OAuth), JSON-schema-enforced output, transient-error retry, token/usd budgets, crash-resumable runs, bounded iterate-to-goal loops with acceptance gates + an independent verifier, and shared-context block dedup so wide fan-out doesn't breach token budgets. Use when a task wants fan-out + verification, deep research, large audits/migrations, judge panels, iterate-until-verified repair loops, or qualitative sorting at scale — anything that benefits from concurrent, verified sub-agents instead of one linear context.
-version: 2.0.0
+description: Run dynamic multi-agent workflows with the `flow` engine — concurrent leaves, per-leaf cost-aware model routing (any provider, API key OR subscription/OAuth), JSON-schema-enforced output, transient-error retry, token/usd budgets, crash-resumable runs, bounded iterate-to-goal loops with acceptance gates + an independent verifier, shared-context block dedup so wide fan-out doesn't breach token budgets, and (v3) full CLI coding agents as leaves via wf.code — Codex ($0 via ChatGPT Pro), Claude Code, or any harness — running in isolated git worktrees with patch evidence. Use when a task wants fan-out + verification, deep research, large audits/migrations, judge panels, iterate-until-verified repair loops, qualitative sorting at scale, or parallel agentic code generation — anything that benefits from concurrent, verified sub-agents instead of one linear context.
+version: 3.0.0
 tags:
   [
     flow,
@@ -12,12 +12,16 @@ tags:
     verification,
     llm,
     any-model,
+    coding-agents,
+    worktree,
   ]
 triggers:
   - user wants a dynamic / multi-agent workflow run on any box
   - task benefits from concurrent verified sub-agents (audit, deep research, judge panel, migration, large-scale sort)
+  - user wants to fan out coding agents to mutate a repo in parallel with patch evidence
   - user mentions the `flow` tool or github.com/Illuminfti/flow
   - need cost-aware model routing across providers or via a subscription (ChatGPT Pro / Claude Max / Grok)
+  - need a cross-vendor alternative to Claude Code Workflow with budget gates and crash-resume
 ---
 
 # flow — dynamic workflows for any agent, any model
@@ -75,11 +79,57 @@ flow resume <run_id> myflow.py # after a crash — completed leaves are skipped
 ## The `wf` API (the whole surface)
 
 `wf.agent(prompt, *, label, schema, tier, model, provider, required, max_tokens, timeout)` ·
+`wf.code(prompt, *, agent, label, workspace, isolation, schema, continue_id, reserve_tokens, timeout, required)` ·
 `wf.local(fn, *args)` · `wf.parallel([thunk,...])` · `wf.pipeline(items, *stages)` ·
 `wf.workflow(child_fn, inputs)` · `wf.phase(name)` · `wf.log/notify` ·
 `wf.spend()/remaining()/has_headroom()` · `wf.block(text)` / `wf.resolve_blocks(text)` ·
 `wf.loop(spec=LoopSpec(...), step=..., verify=...)`. Build a list of zero-arg lambdas
 for `parallel`; bind loop vars with defaults (`lambda d=d: ...`).
+
+## v3: agentic leaves — `wf.code`
+
+Fan out full CLI coding agents as leaves. Each agent uses its own tools (read/
+edit files, run commands), returns a structured receipt, and runs inside the
+budget gate and crash-resume journal.
+
+```python
+VERDICT = {"type": "object", "required": ["verdict"]}
+
+def run(wf, args):
+    wf.phase("build")
+    # Run three agents in parallel, each in its own isolated worktree
+    receipts = wf.parallel([
+        lambda task=task: wf.code(
+            task["prompt"], agent="coder",
+            workspace=args["repo"], isolation="worktree",
+            schema=VERDICT, label=task["label"])
+        for task in args["tasks"]
+    ])
+    # receipts[i]["patch"]["files"]  — what each agent changed
+    # receipts[i]["session_id"]      — chain a follow-up with continue_id=
+    # live repo is untouched; apply patches selectively
+    return receipts
+```
+
+Configure agents in `.flow.yaml` — `codex` is $0 default coder (ChatGPT Pro),
+`claude` is the cross-vendor reviewer:
+
+```yaml
+agents:
+  coder:
+    harness: codex
+    sandbox: workspace-write
+    reserve_tokens: 30000
+  reviewer:
+    harness: claude
+    model: sonnet
+    allowed_tools: [Read, Grep, Glob]
+    reserve_tokens: 30000
+```
+
+Receipt shape: `{value, text, session_id, patch: {changed, files, patch}, workspace, leaf_id, agent, spend}`.
+Chain leaves: `wf.code(..., continue_id=first["session_id"])`.
+Full guide: `docs/agents.md`.
 
 ## v2: blocks + bounded loops (the big levers)
 
@@ -129,7 +179,12 @@ tokens. Always pass a `--budget`.
 2. Prefer `--nl` for ad-hoc tasks; write a script for repeatable ones (save under
    the project or `~/.config/flow/`).
 3. Pick a `tier` per leaf: `quality` for hard work, `cheap`/`free` for verification.
-4. Always set a budget; inspect `flow trace <run_id>` after.
-5. For a real run, verify against the trace (routed model + cost per leaf), not the plan.
+4. For agentic coding tasks: use `wf.code` with `agent="coder"` (codex, $0) for
+   generation and `agent="reviewer"` (claude sonnet) for read-only review. Always
+   set `isolation="worktree"` when the agent will mutate files.
+5. Always set a budget; `reserve_tokens` per agent should be ≥ the expected repo
+   context size. Agent leaves ingest far more than their prompt.
+6. Inspect `flow trace <run_id>` after; for long agentic runs use `flow watch <run_id>`.
+7. For a real run, verify against the trace (routed model + cost per leaf), not the plan.
 
-Full agent setup guide: `AGENTS.md` in the repo.
+Full agent setup guide: `AGENTS.md` in the repo. Full v3 agent reference: `docs/agents.md`.
