@@ -9,6 +9,7 @@ from __future__ import annotations
 from .backends import BackendError, BackendResponse, register_backend
 from .budget import Budget, BudgetExceeded
 from .config import ConfigError
+from .loop import IterationRecord, LoopLedger, LoopRun, LoopSpec, VerifierIdentityError
 from .router import RouterError, choose
 from .runtime import ExecutionResult, FailureMode, ParallelError, Workflow, run_workflow
 from .tools import ToolDefinition, register_tool
@@ -28,6 +29,11 @@ __all__ = [
     "FailureMode",
     "ExecutionResult",
     "ParallelError",
+    "LoopSpec",
+    "LoopRun",
+    "IterationRecord",
+    "LoopLedger",
+    "VerifierIdentityError",
     "register_tool",
     "ToolDefinition",
     "choose",

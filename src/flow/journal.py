@@ -19,11 +19,16 @@ from .ids import utc_now
 # not happen, so `resume` re-runs it (resume = finish what got cut off).
 TERMINAL_EVENTS = {"completed", "cached"}
 
+# A failed iteration is NOT terminal: it reruns on resume (its completed
+# leaves still short-circuit via the leaf cache).
+ITERATION_TERMINAL_EVENTS = {"iteration_completed"}
+
 
 class Journal:
     def __init__(self, run_dir: Path):
         self.run_dir = Path(run_dir)
         self.leaves_dir = self.run_dir / "leaves"
+        self.iterations_dir = self.run_dir / "iterations"
         self.journal_path = self.run_dir / "journal.jsonl"
         self.manifest_path = self.run_dir / "manifest.json"
         self.state_path = self.run_dir / "state.json"
@@ -94,6 +99,23 @@ class Journal:
         except Exception:
             return None
 
+    def write_iteration_record(self, iteration_id: str, payload: dict) -> str:
+        """Materialize one loop iteration's record (wf.loop, plan WS-B). The
+        directory is created lazily so v1 run dirs stay byte-identical."""
+        self.iterations_dir.mkdir(parents=True, exist_ok=True)
+        path = self.iterations_dir / f"{iteration_id}.json"
+        self._atomic_write(path, payload)
+        return str(path.relative_to(self.run_dir))
+
+    def read_iteration_record(self, iteration_id: str) -> Optional[dict]:
+        path = self.iterations_dir / f"{iteration_id}.json"
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
     def snapshot_state(self, state: dict) -> None:
         """Periodic compacted snapshot (flock+fsync, workstream pattern)."""
         self._atomic_write(self.state_path, state)
@@ -146,4 +168,18 @@ class Journal:
             res = self.read_leaf_result(lid)
             if res is not None:
                 out[lid] = res
+        return out
+
+    def completed_iterations(self, loop_id: str) -> dict[int, dict]:
+        """{iteration: record} for iterations with a terminal WAL event AND a
+        present record file — a completed iteration never reruns after a crash."""
+        terminal: set[int] = set()
+        for rec in self.replay():
+            if rec.get("event") in ITERATION_TERMINAL_EVENTS and rec.get("loop_id") == loop_id:
+                terminal.add(int(rec["iteration"]))
+        out: dict[int, dict] = {}
+        for n in terminal:
+            res = self.read_iteration_record(f"{loop_id}-i{n}")
+            if res is not None:
+                out[n] = res
         return out

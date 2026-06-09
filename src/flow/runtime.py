@@ -31,6 +31,7 @@ from .budget import Budget
 from .ids import leaf_id as compute_leaf_id
 from .ids import new_run_id, stable_hash
 from .leaves import LeafRequest
+from .loop import LoopSpec, run_loop
 from .paths import run_dir_for
 from .scheduler import Engine
 
@@ -188,6 +189,17 @@ class Workflow:
                 raise RuntimeError(f"local leaf {label} {res.status}: {res.error}")
             return None
         return res.value
+
+    # -- loop (v2) ---------------------------------------------------------
+    def loop(self, *, spec: LoopSpec, step: Callable[["Workflow", dict], Any],
+             verify: Optional[Callable[["Workflow", dict], Any]] = None) -> dict:
+        """Bounded iterate-to-goal envelope (plan §1/§8). Each iteration runs
+        ``step`` then ``verify`` as ordinary leaves; returns the LoopRun receipt."""
+        token = _CURRENT_PHASE.set(_CURRENT_PHASE.get())
+        try:
+            return run_loop(self, spec=spec, step=step, verify=verify)
+        finally:
+            _CURRENT_PHASE.reset(token)
 
     # -- combinators -----------------------------------------------------
     def _bind_phase(self, fn: Callable) -> Callable:
