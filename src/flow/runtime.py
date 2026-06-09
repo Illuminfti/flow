@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import blocks as blocks_mod
+from . import config
 from . import router as router_mod
 from .budget import Budget
 from .ids import leaf_id as compute_leaf_id
@@ -162,6 +163,86 @@ class Workflow:
                 raise RuntimeError(f"leaf {label} {res.status}: {res.error}")
             return None
         return res.value
+
+    def code(
+        self,
+        prompt: str,
+        *,
+        agent: str = "coder",
+        label: Optional[str] = None,
+        workspace: Optional[str] = None,
+        isolation: Optional[str] = None,
+        schema: Any = None,
+        continue_id: str = "",
+        reserve_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+        required: bool = True,
+    ) -> Optional[dict]:
+        """One *agentic* leaf (v3): a full CLI coding agent — Codex, Claude
+        Code, or any configured harness — runs the task in ``workspace`` with
+        its own tools, under this run's budget/journal/resume. Returns a
+        receipt dict: value (schema-parsed final answer), text, session_id
+        (continuation handle for a follow-up ``wf.code(continue_id=...)``),
+        patch (worktree change evidence when ``isolation="worktree"``),
+        workspace, spend. Agents are configured in the ``agents:`` config
+        section; their tool surface lives there, not per-leaf."""
+        import os as _os
+
+        acfg = (config.get().get("agents") or {}).get(agent)
+        if acfg is None:
+            raise router_mod.RouterError(
+                f"unknown agent {agent!r}; configure it under agents: in the "
+                f"flow config (configured: {sorted(config.get().get('agents') or {})})")
+        label = label or f"code-{agent}-{stable_hash(prompt, 8)}"
+        workspace = str(Path(workspace).expanduser()) if workspace else _os.getcwd()
+        harness = acfg.get("harness", "generic")
+        route = router_mod.Route(
+            provider=f"agent:{agent}", model=acfg.get("model") or harness,
+            backend="agent_cli", tier="agent", pricing=(0.0, 0.0),
+            free=bool(acfg.get("free", True)),
+            why=f"agent leaf: {agent} ({harness})")
+        schema_hash = stable_hash(schema) if schema is not None else ""
+        lid = compute_leaf_id(
+            run_script=self._script_id, phase=self._phase, label=label,
+            prompt=prompt, model=route.model, backend="agent_cli",
+            schema=schema_hash, provider=route.provider,
+            agent=stable_hash({"agent": agent, "workspace": workspace,
+                               "isolation": isolation or "",
+                               "continue_id": continue_id}),
+        )
+        agents_dir = self._engine.run_dir / "agents"
+        schema_file = ""
+        # Codex's native --output-schema only accepts OpenAI strict-form
+        # schemas (additionalProperties:false at every object). Loose schemas
+        # are enforced via the prompt instruction + continuation repair instead.
+        if (schema is not None and harness == "codex" and isinstance(schema, dict)
+                and schema.get("additionalProperties") is False):
+            agents_dir.mkdir(parents=True, exist_ok=True)
+            sf = agents_dir / f"{lid[:16]}.schema.json"
+            sf.write_text(json.dumps(schema), encoding="utf-8")
+            schema_file = str(sf)
+        req = LeafRequest(
+            leaf_id=lid, label=label, phase=self._phase, prompt=prompt, route=route,
+            schema=schema, schema_hash=schema_hash, timeout=timeout, required=required,
+            agent=agent, workspace=workspace, isolation=isolation or "",
+            continue_id=continue_id,
+            transcript_path=str(agents_dir / f"{lid[:16]}.transcript.jsonl"),
+            schema_file=schema_file,
+            reserve_tokens=int(reserve_tokens if reserve_tokens is not None
+                               else acfg.get("reserve_tokens", 30000)),
+        )
+        res = self._engine.submit_leaf(req)
+        if res.status != "completed":
+            if required:
+                raise RuntimeError(f"agent leaf {label} {res.status}: {res.error}")
+            return None
+        return {
+            "value": res.value, "text": res.text, "session_id": res.session_id,
+            "patch": res.patch, "workspace": res.workspace, "leaf_id": lid,
+            "agent": agent,
+            "spend": {"input_tokens": res.input_tokens,
+                      "output_tokens": res.output_tokens, "usd": res.usd},
+        }
 
     def local(
         self,

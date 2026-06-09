@@ -21,6 +21,7 @@ class BackendResponse:
     model: str = ""
     native: Any = None  # local backend preserves the real Python return value
     tool_calls_made: int = 0  # tool turns executed in a tool-use loop
+    session_id: str = ""  # agent harness session/thread id (continuation handle, v3)
 
 
 class BackendError(RuntimeError):

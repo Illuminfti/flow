@@ -36,6 +36,14 @@ class LeafRequest:
     tools: list = field(default_factory=list)          # granted tool names
     tool_approval_gates: dict = field(default_factory=dict)
     required: bool = True
+    # agent leaves (v3)
+    agent: str = ""                                    # config agents.<name> entry
+    workspace: str = ""                                # cwd the harness runs in
+    isolation: str = ""                                # "" | "worktree"
+    continue_id: str = ""                              # resume a prior harness session
+    transcript_path: str = ""                          # harness transcript persisted here
+    schema_file: str = ""                              # codex --output-schema file
+    reserve_tokens: int = 0                            # budget reserve hint (agents are open-ended)
 
 
 @dataclass
@@ -67,6 +75,9 @@ class LeafResult:
     input_sha256: str = ""                             # Lever-1: hash of the dispatched prompt
     input_chars: int = 0
     block_refs: list = field(default_factory=list)     # shared-block shas referenced by the prompt
+    session_id: str = ""                               # agent harness continuation handle (v3)
+    workspace: str = ""                                # where the agent leaf actually ran (v3)
+    patch: dict = field(default_factory=dict)          # worktree change evidence (v3)
 
     def as_dict(self) -> dict:
         return dict(self.__dict__)
@@ -90,6 +101,10 @@ def run_leaf(req: LeafRequest) -> LeafResult:
 
     kw = {}
     if req.tools:
+        if backend_kind == "agent_cli":
+            return _fail(req, "agent leaves own their tool surface via the agents "
+                              "config (allowed_tools/sandbox); per-leaf tools= is "
+                              "for API backends", started)
         if backend_kind not in ("openai_http", "anthropic_sdk"):
             return _fail(req, f"tools require an openai_http or anthropic_sdk backend, "
                               f"got {backend_kind!r}", started)
@@ -177,6 +192,8 @@ def run_leaf(req: LeafRequest) -> LeafResult:
         tokens_estimated=raw.tokens_estimated,
         attempts=stats["attempts"], tool_calls_made=getattr(raw, "tool_calls_made", 0), error=error,
         required=req.required, error_kind=schema_mod.error_kind(error) if status == "schema_failed" else None,
+        session_id=getattr(raw, "session_id", "") or "",
+        workspace=req.workspace,
     )
 
 

@@ -38,7 +38,7 @@ def new_run_id(slug: str = "run") -> str:
 def leaf_id(*, run_script: str, phase: str, label: str, prompt: str,
             model: str, backend: str, schema: str = "",
             provider: str = "", toolsets: str = "", tools: str = "",
-            max_tokens: str = "", local: str = "") -> str:
+            max_tokens: str = "", local: str = "", agent: str = "") -> str:
     """Content-addressed leaf id == resume + cache key.
 
     Identical behavior-affecting inputs → identical id → a completed result is
@@ -62,6 +62,7 @@ def leaf_id(*, run_script: str, phase: str, label: str, prompt: str,
         "tools": tools,
         "max_tokens": max_tokens,
         "local": local,
+        "agent": agent,
     }.items():
         if value:
             payload[key] = value

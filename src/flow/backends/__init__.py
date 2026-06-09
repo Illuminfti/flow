@@ -11,6 +11,7 @@ from typing import Callable
 
 from .. import config as _config
 from .base import Backend, BackendError, BackendResponse
+from .agent_cli import AgentCLIBackend
 from .anthropic_sdk import AnthropicBackend
 from .codex import CodexBackend
 from .local import LocalBackend
@@ -95,11 +96,37 @@ def _build_local(req, cfg, prov) -> Backend:
     return LocalBackend(req.local_fn, req.local_args, req.local_kwargs)
 
 
+def _build_agent_cli(req, cfg, prov) -> Backend:
+    agents = cfg.get("agents") or {}
+    acfg = agents.get(req.agent)
+    if acfg is None:
+        raise BackendError(f"unknown agent {req.agent!r}; configured: {sorted(agents)}")
+    return AgentCLIBackend(
+        harness=acfg.get("harness", "generic"),
+        model=acfg.get("model", ""),  # only an explicit model reaches -m / --model
+        provider=req.route.provider,
+        workspace=req.workspace,
+        transcript_path=req.transcript_path,
+        continue_id=req.continue_id,
+        sandbox=acfg.get("sandbox", "workspace-write"),
+        allowed_tools=list(acfg.get("allowed_tools") or []),
+        add_dirs=list(acfg.get("add_dirs") or []),
+        skip_permissions=bool(acfg.get("skip_permissions", False)),
+        system_prompt=acfg.get("system_prompt", ""),
+        cmd_template=list(acfg.get("cmd_template") or []),
+        extra_args=list(acfg.get("extra_args") or []),
+        schema_file=req.schema_file,
+        default_timeout=float(acfg.get("timeout_s", 1800.0)),
+        bin=acfg.get("bin", ""),
+    )
+
+
 register_backend("openai_http", _build_openai_http)
 register_backend("anthropic_sdk", _build_anthropic)
 register_backend("codex", _build_codex)
 register_backend("shell_cmd", _build_shell_cmd)
 register_backend("local", _build_local)
+register_backend("agent_cli", _build_agent_cli)
 
 
 def build_backend(req) -> Backend:
@@ -108,7 +135,7 @@ def build_backend(req) -> Backend:
     if builder is None:
         raise BackendError(f"unknown backend kind {kind!r}; registered: {sorted(_REGISTRY)}")
     cfg = _config.get()
-    prov = {} if kind == "local" else _config.provider_of(cfg, req.route.provider)
+    prov = {} if kind in ("local", "agent_cli") else _config.provider_of(cfg, req.route.provider)
     return builder(req, cfg, prov)
 
 

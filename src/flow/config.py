@@ -47,6 +47,11 @@ _DEFAULTS: dict[str, Any] = {
     "models": {},
     "tiers": {"quality": [], "cheap": [], "free": [], "local": []},
     "defaults": {"tier": "quality", "backend": "openai_http"},
+    # v3 agent harnesses (wf.code): full CLI coding agents as leaves.
+    # {"coder": {"harness": "codex", "sandbox": "workspace-write"},
+    #  "reviewer": {"harness": "claude", "model": "sonnet",
+    #               "allowed_tools": ["Read", "Grep", "Glob"]}}
+    "agents": {},
 }
 
 

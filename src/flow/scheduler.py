@@ -27,6 +27,7 @@ from . import blocks as blocks_mod
 from . import cache as cache_mod
 from . import config as config_mod
 from . import schema as schema_mod
+from . import worktree as worktree_mod
 from .backends.pricing import estimate_tokens
 from .budget import Budget, BudgetExceeded, DeadlineExceeded
 from .journal import Journal
@@ -177,6 +178,10 @@ class Engine:
         self._charge_blocks(req)
         est_in = max(1, len(req.prompt) // 4)
         est_out = req.max_tokens or 400
+        if getattr(req, "reserve_tokens", 0):
+            # Agent leaves ingest far more than their prompt (repo context,
+            # tool output) — honor the explicit reserve hint as the floor.
+            est_in = max(est_in, int(req.reserve_tokens) - est_out)
         est_usd = req.route.est_usd(est_in, est_out)
         # F5: a schema leaf may make two model calls (initial + one repair); a
         # tool leaf runs a multi-turn loop — gate on the worst case, commit truth.
@@ -209,6 +214,21 @@ class Engine:
                     "event": "started", "backend": req.route.backend})
 
         timeout = self.budget.leaf_deadline(req.timeout)
+        wt_path = None
+        orig_workspace = req.workspace
+        if req.isolation == "worktree" and req.route.backend == "agent_cli":
+            # Each isolated agent leaf runs in its own detached worktree; the
+            # change set comes back as a patch artifact, never a live mutation.
+            try:
+                wt_path = worktree_mod.prepare(
+                    req.workspace, self.run_dir / "worktrees" / req.leaf_id[:16])
+                req.workspace = str(wt_path)
+            except Exception as exc:
+                res = _fail_result(req, f"worktree: {exc}")
+                self._emit({"leaf_id": req.leaf_id, "label": req.label, "phase": req.phase,
+                            "event": "failed", "error": str(exc), "reason": "worktree"})
+                self._record(res)
+                return res
         try:
             # F3: local leaves are pure Python with unpicklable closures — run
             # them in-thread (also faster: no IPC) even in process mode.
@@ -219,6 +239,13 @@ class Engine:
                 res = fut.result(timeout=timeout)
         except Exception as exc:
             res = _fail_result(req, f"executor: {exc}")
+        if wt_path is not None:
+            patch_file = self.run_dir / "artifacts" / f"{req.leaf_id[:16]}.patch"
+            evidence = worktree_mod.finalize(orig_workspace, wt_path, patch_file)
+            if evidence.get("patch"):
+                evidence["patch"] = str(Path(evidence["patch"]).relative_to(self.run_dir))
+                res.artifact_refs = list(res.artifact_refs) + [evidence["patch"]]
+            res.patch = evidence
 
         # Lever-1 measurement infra: persist what each leaf actually ingested,
         # so the dedup rate is measured, not inferred from input-token floors.
