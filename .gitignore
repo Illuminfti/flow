@@ -13,3 +13,7 @@ venv/
 .coverage
 htmlcov/
 *.seen
+
+# local-only replay fixtures (private workload prompts; live tests skip without them)
+tests/baselines/
+uv.lock
