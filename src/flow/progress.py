@@ -4,10 +4,13 @@
 (you supply it — Slack, Telegram, a print, anything). Default is silent.
 ``trace`` renders a run's journal as a box-drawing dashboard: phases, per-leaf
 status glyphs, model badges, latency bars, cost, retries, and a summary panel.
+``watch`` tails a live run incrementally and redraws a compact status frame.
 """
 from __future__ import annotations
 
+import io
 import json
+import sys
 import time
 from typing import Callable, Optional
 
@@ -15,6 +18,13 @@ from .paths import run_dir_for
 
 _GLYPH = {
     "completed": "✓", "failed": "✗", "schema_failed": "⚠", "cached": "◍", "running": "◌",
+    "cancelled": "⊘",
+}
+
+# Glyphs used by watch() — parity with the spec
+_WATCH_GLYPH = {
+    "completed": "✓", "failed": "✗", "schema_failed": "✗",
+    "cached": "↻", "cancelled": "⊘", "running": "◌",
 }
 
 
@@ -298,6 +308,239 @@ def render_card(run_id: str, out_path: Optional[str] = None, width: int = 720,
             os.unlink(html_path)
         except OSError:
             pass
+    return None
+
+
+def _read_journal_incremental(path, offset: int) -> tuple[list[dict], int]:
+    """Read new JSONL lines from *path* starting at *offset* bytes.
+    Returns (new_records, new_offset)."""
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return [], offset
+    if size <= offset:
+        return [], offset
+    records: list[dict] = []
+    with path.open("rb") as fh:
+        fh.seek(offset)
+        raw = fh.read()
+        new_offset = offset + len(raw)
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except Exception:
+            continue
+    return records, new_offset
+
+
+def _build_watch_model(records: list[dict]) -> dict:
+    """Reduce journal records to a watch model dict."""
+    phases: list[str] = []
+    leaves: dict[str, dict] = {}
+    loops: dict[str, dict] = {}   # loop_id -> {iterations, stopped}
+    total_usd = 0.0
+
+    for r in records:
+        ev = r.get("event")
+
+        # Phase tracking
+        if ev == "phase":
+            ph = r.get("phase")
+            if ph and ph not in phases:
+                phases.append(ph)
+
+        # Loop tracking
+        if ev == "loop_started":
+            lid = r.get("loop_id")
+            if lid:
+                loops.setdefault(lid, {"iterations": 0, "stopped": False})
+        if ev == "iteration_completed":
+            lid = r.get("loop_id")
+            if lid:
+                loops.setdefault(lid, {"iterations": 0, "stopped": False})
+                loops[lid]["iterations"] = max(loops[lid]["iterations"],
+                                                r.get("iteration", 0))
+        if ev == "loop_stopped":
+            lid = r.get("loop_id")
+            if lid:
+                loops.setdefault(lid, {"iterations": 0, "stopped": False})
+                loops[lid]["stopped"] = True
+
+        # Leaf tracking
+        lid = r.get("leaf_id")
+        if not lid:
+            continue
+        e = leaves.setdefault(lid, {
+            "label": r.get("label") or lid,
+            "phase": r.get("phase"),
+            "status": "running",
+            "model": None, "tokens_in": 0, "tokens_out": 0,
+            "usd": 0.0, "elapsed_s": 0.0, "repairs": 0,
+        })
+        # Always update label/phase from first occurrence
+        if not e.get("label") or e["label"] == lid:
+            e["label"] = r.get("label") or lid
+        if not e.get("phase"):
+            e["phase"] = r.get("phase")
+
+        if ev in ("completed", "failed", "schema_failed", "cached", "cancelled"):
+            tok = r.get("tokens") or {}
+            usd = r.get("usd") or 0.0
+            e.update({
+                "status": ev,
+                "model": r.get("model"),
+                "tokens_in": tok.get("in", 0),
+                "tokens_out": tok.get("out", 0),
+                "usd": usd,
+                "elapsed_s": r.get("elapsed_s") or 0.0,
+            })
+            total_usd += usd
+        if ev == "started":
+            e["status"] = "running"
+        if r.get("repaired"):
+            e["repairs"] = e.get("repairs", 0) + 1
+
+    total_usd = sum(e.get("usd", 0.0) for e in leaves.values())
+
+    by_phase: dict[str, list[dict]] = {}
+    for e in leaves.values():
+        ph = e.get("phase") or "?"
+        by_phase.setdefault(ph, []).append(e)
+    # phases not seen from phase-events but present in leaves
+    for ph in list(by_phase):
+        if ph not in phases:
+            phases.append(ph)
+
+    counts: dict[str, int] = {"completed": 0, "failed": 0, "running": 0,
+                               "cached": 0, "cancelled": 0, "schema_failed": 0}
+    for e in leaves.values():
+        st = e.get("status", "running")
+        counts[st] = counts.get(st, 0) + 1
+
+    return {
+        "phases": phases, "by_phase": by_phase, "leaves": leaves,
+        "loops": loops, "total_usd": total_usd, "counts": counts,
+    }
+
+
+def _render_watch_frame(run_id: str, model: dict, done: bool) -> str:
+    """Render a single text frame for watch()."""
+    buf = io.StringIO()
+    w = buf.write
+    W = 72
+
+    status_tag = "done" if done else "live"
+    header = f" flow watch · {run_id} · {status_tag} "
+    w(f"╭{header}{'─' * max(0, W - len(header) + 1)}╮\n")
+
+    counts = model["counts"]
+    total_usd = model["total_usd"]
+    n_total = sum(counts.values())
+    n_done = counts.get("completed", 0) + counts.get("cached", 0) + counts.get("cancelled", 0)
+    n_fail = counts.get("failed", 0) + counts.get("schema_failed", 0)
+    n_run = counts.get("running", 0)
+    summary = (f" {n_total} leaves · {n_done} done · {n_fail} failed · "
+               f"{n_run} running · ${total_usd:.4f}")
+    w(f"│{summary:<{W}}│\n")
+    w(f"├{'─' * W}┤\n")
+
+    for ph in model["phases"]:
+        items = model["by_phase"].get(ph)
+        if not items:
+            continue
+        ph_hdr = f" ▍ {ph}"
+        w(f"│{ph_hdr:<{W}}│\n")
+        for e in items:
+            st = e.get("status", "running")
+            g = _WATCH_GLYPH.get(st, "?")
+            label = (e.get("label") or "")[:24]
+            mdl = (e.get("model") or "")[:16]
+            tok = e.get("tokens_in", 0) + e.get("tokens_out", 0)
+            usd = e.get("usd", 0.0)
+            elapsed = e.get("elapsed_s", 0.0)
+            repairs = e.get("repairs", 0)
+            rep_tag = f" ⟳{repairs}" if repairs else ""
+            meta = f"{elapsed:>6.1f}s {tok:>6}t ${usd:.4f}{rep_tag}"
+            left = f"  {g} {label}"
+            # pad so meta is right-aligned
+            gap = W - len(left) - len(meta) - len(mdl) - 2
+            row = f"{left} {mdl}{' ' * max(1, gap)}{meta}"
+            w(f"│{row[:W]:<{W}}│\n")
+
+    # Loop summary lines
+    for loop_id, ldata in model["loops"].items():
+        iters = ldata["iterations"]
+        st = "stopped" if ldata["stopped"] else "running"
+        loop_line = f"  ↻ loop {loop_id[:12]} · {iters} iter · {st}"
+        w(f"│{loop_line:<{W}}│\n")
+
+    w(f"╰{'─' * W}╯\n")
+    return buf.getvalue()
+
+
+def watch(run_id: str, *, poll_s: float = 0.5, once: bool = False,
+          stream=None) -> Optional[str]:
+    """Tail a run's journal and redraw a live status frame.
+
+    Parameters
+    ----------
+    run_id:
+        The run to observe.
+    poll_s:
+        Seconds between journal re-reads (ignored when ``once=True``).
+    once:
+        Render exactly one frame and return it as a string (no loop, no ANSI
+        clear, no side-effects — designed for tests).
+    stream:
+        Where to write output.  Defaults to ``sys.stdout``.
+
+    Returns
+    -------
+    str when ``once=True``, else ``None``.
+
+    Exit conditions (live mode):
+    - run-report.json exists AND no leaf is still mid-flight.
+    - KeyboardInterrupt (Ctrl-C).
+    """
+    if stream is None:
+        stream = sys.stdout
+
+    run_dir = run_dir_for(run_id)
+    journal_path = run_dir / "journal.jsonl"
+    report_path = run_dir / "run-report.json"
+
+    offset = 0
+    all_records: list[dict] = []
+
+    def _tick() -> tuple[str, bool]:
+        nonlocal offset, all_records
+        new_recs, offset = _read_journal_incremental(journal_path, offset)
+        all_records.extend(new_recs)
+        model = _build_watch_model(all_records)
+        report_exists = report_path.exists()
+        mid_flight = model["counts"].get("running", 0) > 0
+        done = report_exists and not mid_flight
+        frame = _render_watch_frame(run_id, model, done)
+        return frame, done
+
+    if once:
+        frame, _ = _tick()
+        return frame
+
+    try:
+        while True:
+            frame, done = _tick()
+            stream.write("\x1b[2J\x1b[H")
+            stream.write(frame)
+            stream.flush()
+            if done:
+                break
+            time.sleep(poll_s)
+    except KeyboardInterrupt:
+        pass
     return None
 
 

@@ -51,21 +51,63 @@ def config_path() -> Path:
     return Path(xdg) / "flow" / f"config.{ext}"
 
 
+_AGENT_PRESETS = {
+    "codex": ("coder", {
+        "harness": "codex",
+        "sandbox": "workspace-write",
+        "reserve_tokens": 30000,
+    }),
+    "claude": ("reviewer", {
+        "harness": "claude",
+        "model": "sonnet",
+        "allowed_tools": ["Read", "Grep", "Glob"],
+        "reserve_tokens": 30000,
+    }),
+}
+
+
+def _detect_agents() -> dict:
+    """Return agents sub-dict for any coding-agent CLIs found on PATH."""
+    import shutil
+    found = {}
+    for cli, (key, cfg) in _AGENT_PRESETS.items():
+        if shutil.which(cli):
+            found[key] = cfg
+    return found
+
+
 def cmd_init(force: bool = False) -> int:
     p = config_path()
     p.parent.mkdir(parents=True, exist_ok=True)
+
+    agents = _detect_agents()
+
     if p.exists() and not force:
         print(f"config already exists: {p} (use --force to overwrite)")
+        # Still report detected agents but do NOT touch the existing config.
+        if agents:
+            detected = ", ".join(f"{k} ({v['harness']})" for k, v in agents.items())
+            print(f"detected agent CLIs: {detected} (not written — config exists)")
+        else:
+            print("detected agent CLIs: none")
     else:
+        cfg = dict(_CONFIG)
+        if agents:
+            cfg = {**cfg, "agents": agents}
         if p.suffix == ".yaml":
             import yaml
             body = ("# flow config — https://github.com/Illuminfti/flow\n"
                     "# Add any model with zero code edits. Subscriptions: docs/subscriptions.md\n"
-                    + yaml.safe_dump(_CONFIG, sort_keys=False))
+                    + yaml.safe_dump(cfg, sort_keys=False))
         else:
-            body = json.dumps(_CONFIG, indent=2)
+            body = json.dumps(cfg, indent=2)
         p.write_text(body, encoding="utf-8")
         print(f"wrote {p}")
+        if agents:
+            detected = ", ".join(f"{k} ({v['harness']})" for k, v in agents.items())
+            print(f"detected agent CLIs: {detected}")
+        else:
+            print("detected agent CLIs: none")
     keys = [k for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY") if os.environ.get(k)]
     print(f"detected API keys in env: {keys or 'none — export at least one, or run a local model via ollama'}")
     print("next: flow self-test --offline")

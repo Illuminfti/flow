@@ -63,6 +63,15 @@ def _cmd_status(a) -> int:
     return 0
 
 
+def _cmd_watch(a) -> int:
+    if a.once:
+        frame = progress_mod.watch(a.run_id, once=True)
+        print(frame, end="")
+    else:
+        progress_mod.watch(a.run_id, poll_s=a.poll)
+    return 0
+
+
 def _cmd_author(a) -> int:
     from . import authoring
     print(authoring.author_and_save(a.task, a.out))
@@ -159,6 +168,12 @@ def build_parser() -> argparse.ArgumentParser:
     stt.add_argument("run_id")
     stt.add_argument("--json", action="store_true")
     stt.set_defaults(fn=_cmd_status)
+
+    wa = sub.add_parser("watch", help="live progress view of a running or completed run")
+    wa.add_argument("run_id")
+    wa.add_argument("--poll", type=float, default=0.5, help="poll interval in seconds (default 0.5)")
+    wa.add_argument("--once", action="store_true", help="render one frame and exit (for scripting)")
+    wa.set_defaults(fn=_cmd_watch)
 
     au = sub.add_parser("author", help="author a script from NL (no run)")
     au.add_argument("task")
