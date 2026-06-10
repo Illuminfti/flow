@@ -2,12 +2,13 @@
 
 # flow
 
-### Your code orchestrates. Models — and full coding agents — do bounded work. Everything survives.
+### Your code orchestrates. Models — and full coding agents — do bounded work. Outcomes ship.
 
 **A tiny Python runtime for multi-model LLM workflows and agentic coding tasks — concurrent,
 budgeted, schema-validated, crash-resumable, able to iterate until an independent verifier
-accepts the result, and able to fan out full CLI coding agents into isolated workspaces
-with patch evidence.**
+accepts the result, fan out full CLI coding agents into isolated workspaces with patch evidence,
+and (v4) drive a patch set through a proof-gated rebase queue to merged, proven commits on the
+target branch — zero-touch.**
 
 [![tests](https://github.com/Illuminfti/flow/actions/workflows/tests.yml/badge.svg)](https://github.com/Illuminfti/flow/actions/workflows/tests.yml)
 [![install smoke](https://github.com/Illuminfti/flow/actions/workflows/install-smoke.yml/badge.svg)](https://github.com/Illuminfti/flow/actions/workflows/install-smoke.yml)
@@ -24,13 +25,14 @@ with patch evidence.**
 
 You write one Python function. It fans work out to LLMs — and, in v3, to full
 CLI coding agents (Codex, Claude Code, any harness) — checks their answers, and
-combines the results. `flow` makes that function **operationally safe**: every
-leaf (model call or agentic task) runs concurrently, must return valid JSON
-(malformed output gets self-repaired), counts against a hard token/dollar
-budget, and is journaled to disk — kill the process at any point and
-`flow resume` picks up exactly where it died, without re-paying for finished
-work. Coding agents run in isolated git worktrees and hand back patch artifacts,
-not live mutations.
+combines the results. In v4, it drives a set of patches through a proof-gated
+rebase queue and ships merged, proven commits to the target branch. `flow` makes
+that function **operationally safe**: every leaf (model call or agentic task)
+runs concurrently, must return valid JSON (malformed output gets self-repaired),
+counts against a hard token/dollar budget, and is journaled to disk — kill the
+process at any point and `flow resume` picks up exactly where it died, without
+re-paying for finished work. Coding agents run in isolated git worktrees and
+hand back patch artifacts; `wf.merge` turns those artifacts into proven commits.
 
 ```mermaid
 flowchart LR
@@ -51,16 +53,17 @@ Any model, any provider — API key **or** the subscriptions you already pay for
 
 ## Why you'd want it
 
-| You want to…                                          | flow gives you                                                                                                                     |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Fan out 20 checks / lenses / files at once            | `wf.parallel`, `wf.pipeline` — real concurrency, per-leaf failure policy                                                           |
-| Trust model output                                    | JSON Schema enforced at every leaf; bad output is auto-repaired with the exact validation error, then fails loudly                 |
-| Not wake up to a $400 bill                            | Hard budgets (tokens, USD, calls, deadline) enforced **before** each call — and still enforced across crash-restarts               |
-| Keep big shared context from being billed N times     | `wf.block`: store it once, fan-out siblings get a reference (wide fan-outs measured 53–89% redundant without this)                 |
-| Iterate until the result is actually good             | `wf.loop`: bounded retry-until-verified, with acceptance gates and a **different model as the verifier** — no self-grading         |
-| Survive crashes, reboots, rate-limit deaths           | fsync'd write-ahead journal; `flow resume` skips all completed work                                                                |
-| See what happened                                     | `flow trace`: per-leaf model, cost, latency, retries, repairs                                                                      |
-| Fan out real coding agents to mutate code in parallel | `wf.code` + `isolation="worktree"`: N agents run in isolated worktrees, changes come back as patch artifacts — live repo untouched |
+| You want to…                                          | flow gives you                                                                                                                                                |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fan out 20 checks / lenses / files at once            | `wf.parallel`, `wf.pipeline` — real concurrency, per-leaf failure policy                                                                                      |
+| Trust model output                                    | JSON Schema enforced at every leaf; bad output is auto-repaired with the exact validation error, then fails loudly                                            |
+| Not wake up to a $400 bill                            | Hard budgets (tokens, USD, calls, deadline) enforced **before** each call — and still enforced across crash-restarts                                          |
+| Keep big shared context from being billed N times     | `wf.block`: store it once, fan-out siblings get a reference (wide fan-outs measured 53–89% redundant without this)                                            |
+| Iterate until the result is actually good             | `wf.loop`: bounded retry-until-verified, with acceptance gates and a **different model as the verifier** — no self-grading                                    |
+| Survive crashes, reboots, rate-limit deaths           | fsync'd write-ahead journal; `flow resume` skips all completed work                                                                                           |
+| See what happened                                     | `flow trace`: per-leaf model, cost, latency, retries, repairs                                                                                                 |
+| Fan out real coding agents to mutate code in parallel | `wf.code` + `isolation="worktree"`: N agents run in isolated worktrees, changes come back as patch artifacts — live repo untouched                            |
+| Ship a backlog autonomously — zero human in the loop  | `wf.merge`: proof-gate each patch, repair conflicts/red via bounded agent leaves, auto-merge to the target branch, auto-revert if the post-merge canary fails |
 
 **Skip it** for one-shot prompts and deterministic ETL — workflows multiply
 calls; always set a budget.
@@ -300,6 +303,94 @@ agents:
 | Interactive UI                      | `flow watch <run_id>` (live progress)        | richer built-in UI   |
 
 Full guide: [`docs/agents.md`](docs/agents.md).
+
+## Ship a backlog autonomously — `wf.merge` (v4)
+
+v3 ended with loose patches — a human had to decide what to apply. v4 drives those
+patches to merged, proven commits on the target branch, zero-touch.
+
+```mermaid
+flowchart LR
+    BL["backlog\n[task A, task B, ...]"] --> FO
+    subgraph FO["wf.parallel — one worktree per task"]
+        direction TB
+        W1["worktree A\ncoder agent"] --> PA["patch A"]
+        W2["worktree B\ncoder agent"] --> PB["patch B"]
+    end
+    PA & PB --> MQ
+    subgraph MQ["wf.merge — proof-gated rebase queue"]
+        direction TB
+        G1["Guard 1: test-tamper?\n→ cross-vendor reviewer"] --> G2
+        G2["Guard 2: proof checks\n(flake quarantine)"] --> G3
+        G3["Guard 3: canary on target\n(auto-revert tripwire)"]
+    end
+    MQ -->|"green + allowlisted"| TB[("target branch\nmerged + proven")]
+    MQ -->|"red / tamper / conflict"| EX["exiled\n(repair loop first)"]
+```
+
+```python
+# examples/v4_autonomous_backlog.py — the kill-condition workflow
+def run(wf, args):
+    repo, target = args["repo"], args.get("target", "main")
+    test_cmd = args["test_command"]
+
+    wf.phase("implement")
+    receipts = wf.parallel([
+        (lambda t=t: wf.code(
+            f"Repo: {repo}. Task {t['id']!r}: {t['prompt']}\n\n"
+            "Implement cleanly, add/extend tests. Do NOT weaken existing tests. "
+            'Reply {"summary": "<what you changed>"}.',
+            agent="coder", workspace=repo, isolation="worktree",
+            schema={"type": "object", "required": ["summary"]},
+            label=t["id"], required=False))
+        for t in args["backlog"]
+    ])
+
+    specs = [
+        {"task_id": t["id"],
+         "patch_path": str(wf._engine.run_dir / r["patch"]["patch"]),
+         "files": r["patch"]["files"]}
+        for t, r in zip(args["backlog"], receipts)
+        if r and (r.get("patch") or {}).get("changed")
+    ]
+
+    wf.phase("ship")
+    result = wf.merge(
+        specs, repo=repo, target_branch=target,
+        checks=[{"name": "suite", "command": test_cmd, "timeout": 900}],
+        canary=[{"name": "canary", "command": test_cmd, "timeout": 900}],
+        auto_merge=True, max_repairs=1)
+
+    shipped, total = len(result["merged"]), len(args["backlog"])
+    return {"zero_touch_ship_rate": round(shipped / total, 3) if total else 0.0,
+            "shipped": shipped, "total": total,
+            "merged_to_target": result["merged_to_target"],
+            "reverted": result["reverted"]}
+```
+
+**`merge:` config** — the repo must be allowlisted for auto-merge to fire:
+
+```yaml
+merge:
+  allowlist:
+    - /abs/path/to/repo # exact match or prefix
+  checks:
+    - name: suite
+      command: [python3, -m, pytest, -q]
+      timeout: 900
+  canary:
+    - name: canary
+      command: [python3, -m, pytest, -q]
+      timeout: 900
+```
+
+**vs Claude Code Workflow — the ship layer.** CC Workflow agents edit files but there
+is no built-in proof-gated rebase queue, no auto-merge with a money fence, no auto-revert
+tripwire, and no test-tamper guard. flow still has no live interactive UI beyond
+`flow watch`; CC Workflow's leaves are first-class CC subagents. v4's new ground
+is the _integration + ship_ layer.
+
+Full guide: [`docs/merge.md`](docs/merge.md).
 
 ## How a single call actually runs
 

@@ -32,10 +32,15 @@ def run(wf, args):
     backlog = args["backlog"]
 
     wf.phase("implement")
-    # one isolated coding agent per task — they cannot trample each other
+    # One isolated coding agent per task — they cannot trample each other.
+    # CRITICAL: with isolation="worktree" the agent runs in an isolated CLONE of
+    # the repo (its cwd), NOT `repo` itself. Never name the original repo path in
+    # the prompt — the agent would navigate there and write to the live source.
+    # Tell it to work in the current working directory.
     receipts = wf.parallel([
         (lambda t=t: wf.code(
-            f"You are working in the repo at {repo}. Task {t['id']!r}: {t['prompt']}\n\n"
+            f"You are working in a git repository in your current working directory. "
+            f"Task {t['id']!r}: {t['prompt']}\n\n"
             "Implement it cleanly and add or extend tests to cover it. Do NOT weaken "
             "existing tests. Run the test suite yourself before finishing. "
             'Reply with JSON {"summary": "<what you changed>"}.',
