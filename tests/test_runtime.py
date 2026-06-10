@@ -13,18 +13,24 @@ def _answer():
 
 
 def test_parallel_is_actually_concurrent():
-    N = 10
+    # Proves the pool runs leaves concurrently, not serially. Serial would take
+    # N * SECS (5.0s here); concurrent is ~SECS + scheduling overhead. The bound
+    # sits well below serial with a wide margin so a loaded CI runner's thread-
+    # startup jitter can't false-fail it (a genuinely serial impl can never pass:
+    # it cannot beat 5.0s).
+    N, SECS = 10, 0.5
+    serial = N * SECS  # 5.0s
 
     def run(wf, args):
         wf.phase("fan")
         t0 = time.time()
-        out = wf.parallel([(lambda i=i: wf.local(_sleep_then, i, 0.3, label=f"s{i}")) for i in range(N)])
+        out = wf.parallel([(lambda i=i: wf.local(_sleep_then, i, SECS, label=f"s{i}")) for i in range(N)])
         return {"wall": time.time() - t0, "out": out}
 
     rep = run_workflow(run_fn=run, max_workers=N, slug="conc")
     assert rep["status"] == "completed"
     assert sorted(rep["final"]["out"]) == list(range(N))
-    assert rep["final"]["wall"] < 1.5, rep["final"]["wall"]
+    assert rep["final"]["wall"] < serial * 0.6, rep["final"]["wall"]  # 3.0s vs 5.0s serial
 
 
 def test_local_works_in_process_mode():
