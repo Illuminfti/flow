@@ -144,10 +144,23 @@ def run(wf, args):
 ```
 
 **Parallel safety.** Multiple agents running `isolation="worktree"` on the same
-repo path are safe: each leaf gets its own detached worktree under
-`run_dir/worktrees/<leaf_id>/`. The worktree registry (`git worktree list`) is
-serialized within-process via a lock; concurrent processes work without issue
-since git worktrees are independent paths.
+repo path are safe: each leaf gets its own **independent local clone** (`git
+clone --local`, hardlinked objects — cheap) under `run_dir/worktrees/<leaf_id>/`,
+checked out at the source's current HEAD. A clone is used rather than a linked
+`git worktree` because a coding-agent sandbox (Codex) resolves its writable root
+through the shared `.git` of a linked worktree and writes to the _main_ working
+tree — four parallel agents would clobber each other in the source repo. An
+independent clone has its own `.git`, so the agent's repo-root resolution stays
+inside it. The change set is captured (committed + uncommitted, vs the base
+commit, minus build noise) and the clone is removed.
+
+> **Footgun — never name the original repo path in the prompt.** With
+> `isolation="worktree"` the agent runs in the clone (its cwd), not in `repo`.
+> If the prompt says "work in the repo at /path/to/repo", the agent will navigate
+> to that absolute path and write to the **live source**, bypassing isolation
+> entirely — the clone stays empty and `patch["changed"]` is `False`. Tell the
+> agent to work in **its current working directory**; the harness already runs
+> it there (`-C <clone>`).
 
 **Patch evidence.** `receipt["patch"]["patch"]` is a path relative to `run_dir`
 (e.g. `"artifacts/abcd1234.patch"`). Join with `run_dir_for(run_id)` to get the

@@ -1,7 +1,7 @@
 ---
 name: flow
-description: Run dynamic multi-agent workflows with the `flow` engine — concurrent leaves, per-leaf cost-aware model routing (any provider, API key OR subscription/OAuth), JSON-schema-enforced output, transient-error retry, token/usd budgets, crash-resumable runs, bounded iterate-to-goal loops with acceptance gates + an independent verifier, shared-context block dedup so wide fan-out doesn't breach token budgets, and (v3) full CLI coding agents as leaves via wf.code — Codex ($0 via ChatGPT Pro), Claude Code, or any harness — running in isolated git worktrees with patch evidence. Use when a task wants fan-out + verification, deep research, large audits/migrations, judge panels, iterate-until-verified repair loops, qualitative sorting at scale, or parallel agentic code generation — anything that benefits from concurrent, verified sub-agents instead of one linear context.
-version: 3.0.0
+description: Run dynamic multi-agent workflows with the `flow` engine — concurrent leaves, per-leaf cost-aware model routing (any provider, API key OR subscription/OAuth), JSON-schema-enforced output, transient-error retry, token/usd budgets, crash-resumable runs, bounded iterate-to-goal loops with acceptance gates + an independent verifier, shared-context block dedup so wide fan-out doesn't breach token budgets, (v3) full CLI coding agents as leaves via wf.code — Codex ($0 via ChatGPT Pro), Claude Code, or any harness — running in isolated checkouts with patch evidence, and (v4) wf.merge: drive a fan-out of agent patches to merged, proof-gated, auto-reverting code on a branch behind a fail-closed allowlist money fence. Use when a task wants fan-out + verification, deep research, large audits/migrations, judge panels, iterate-until-verified repair loops, qualitative sorting at scale, parallel agentic code generation, or autonomously shipping a backlog — anything that benefits from concurrent, verified sub-agents instead of one linear context.
+version: 4.0.0
 tags:
   [
     flow,
@@ -83,8 +83,10 @@ flow resume <run_id> myflow.py # after a crash — completed leaves are skipped
 `wf.local(fn, *args)` · `wf.parallel([thunk,...])` · `wf.pipeline(items, *stages)` ·
 `wf.workflow(child_fn, inputs)` · `wf.phase(name)` · `wf.log/notify` ·
 `wf.spend()/remaining()/has_headroom()` · `wf.block(text)` / `wf.resolve_blocks(text)` ·
-`wf.loop(spec=LoopSpec(...), step=..., verify=...)`. Build a list of zero-arg lambdas
-for `parallel`; bind loop vars with defaults (`lambda d=d: ...`).
+`wf.loop(spec=LoopSpec(...), step=..., verify=...)` ·
+`wf.merge(patches, *, repo, target_branch, checks, canary, auto_merge, max_repairs)`.
+Build a list of zero-arg lambdas for `parallel`; bind loop vars with defaults
+(`lambda d=d: ...`).
 
 ## v3: agentic leaves — `wf.code`
 
@@ -130,6 +132,41 @@ agents:
 Receipt shape: `{value, text, session_id, patch: {changed, files, patch}, workspace, leaf_id, agent, spend}`.
 Chain leaves: `wf.code(..., continue_id=first["session_id"])`.
 Full guide: `docs/agents.md`.
+
+## v4: ship a backlog — `wf.merge`
+
+Turn the fan-out of agent patches into merged, proven code. Each patch applies
+onto a fresh integration branch, is proof-gated against the repo's real test
+suite, repaired by a bounded agent leaf on conflict or red, and (when the repo
+is allowlisted) auto-merged to the target branch with an auto-reverting canary.
+
+```python
+def run(wf, args):
+    wf.phase("implement")
+    receipts = wf.parallel([
+        (lambda t=t: wf.code(t["prompt"], agent="coder", workspace=args["repo"],
+                             isolation="worktree", label=t["id"], required=False))
+        for t in args["backlog"]])
+    wf.phase("ship")
+    return wf.merge(receipts, repo=args["repo"], target_branch="main",
+                    checks=[{"name": "test", "command": ["python3", "-m", "pytest", "-q"]}],
+                    canary=[{"name": "canary", "command": ["python3", "-m", "pytest", "-q"]}],
+                    auto_merge=True)
+```
+
+Safety doctrine — **autonomous merge is gated, not trusted**:
+
+- **Money fence (fail-closed).** `auto_merge` promotes only if the repo is in
+  config `merge.allowlist`. Empty allowlist = withheld everywhere. **NEVER add a
+  liquidator / live-money repo.**
+- **Test-tamper guard.** A patch that modifies existing tests is routed to the
+  cross-vendor reviewer and fails closed unless explicitly accepted.
+- **Flake quarantine.** A check that flips on a clean re-run neither blocks nor ships.
+- **Auto-revert tripwire.** A post-merge canary failure reverts the target to its
+  pre-merge SHA and exiles the batch.
+
+MergeResult: `{merged:[ids], exiled:[ids], merged_to_target, reverted, integration_branch, outcomes:[{status, proofs, review}], canary}`.
+Worked example: `examples/v4_autonomous_backlog.py`. Full guide: `docs/merge.md`.
 
 ## v2: blocks + bounded loops (the big levers)
 

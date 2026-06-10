@@ -52,6 +52,12 @@ _DEFAULTS: dict[str, Any] = {
     #  "reviewer": {"harness": "claude", "model": "sonnet",
     #               "allowed_tools": ["Read", "Grep", "Glob"]}}
     "agents": {},
+    # v4 merge orchestrator (wf.merge). allowlist gates auto-merge to a
+    # protected branch (fail-closed money fence). checks = proof gate run on
+    # each applied patch; canary = post-merge checks on the target branch.
+    # {"allowlist": ["/abs/repo"], "checks": [{"name": "test",
+    #   "command": ["pytest", "-q"], "timeout": 600}], "canary": [...]}
+    "merge": {"allowlist": [], "checks": [], "canary": []},
 }
 
 

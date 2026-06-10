@@ -15,12 +15,14 @@ from .config import ConfigError
 from .gates import GateResult, GateRunner, GoalContract, default_goal_contract
 from .handoff import HandoffReport
 from .loop import IterationRecord, LoopLedger, LoopRun, LoopSpec, VerifierIdentityError
+from .merge import MergeRefused, MergeResult, TaskOutcome
+from .proof import ProofBundle, ProofReceipt, run_check
 from .router import RouterError, choose
 from .runtime import ExecutionResult, FailureMode, ParallelError, Workflow, run_workflow
 from .signatures import FailureSignature, FailureSignatureRegistry, RepairRouter
 from .tools import ToolDefinition, register_tool
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"
 
 __all__ = [
     "Workflow",
@@ -50,6 +52,12 @@ __all__ = [
     "FailureSignature",
     "FailureSignatureRegistry",
     "RepairRouter",
+    "MergeResult",
+    "MergeRefused",
+    "TaskOutcome",
+    "ProofBundle",
+    "ProofReceipt",
+    "run_check",
     "register_tool",
     "ToolDefinition",
     "choose",

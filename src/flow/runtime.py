@@ -244,6 +244,42 @@ class Workflow:
                       "output_tokens": res.output_tokens, "usd": res.usd},
         }
 
+    def merge(
+        self,
+        patches: list,
+        *,
+        repo: str,
+        target_branch: Optional[str] = None,
+        checks: Optional[list] = None,
+        canary: Optional[list] = None,
+        auto_merge: bool = False,
+        max_repairs: int = 1,
+        repair_agent: str = "coder",
+        reviewer_agent: str = "reviewer",
+    ) -> dict:
+        """Drive a set of agent-produced patches to merged + proven code (v4).
+
+        ``patches`` is a list of ``wf.code`` receipts (worktree-isolated) or
+        explicit ``{task_id, patch_path|patch_text, files}`` specs. Each patch
+        is applied in order onto a fresh integration branch, proof-gated
+        (``checks``: ``[{"name","command","timeout"}]``, flake-quarantined), and
+        repaired by a bounded agent leaf on conflict or red. A patch modifying
+        existing tests is routed to a cross-vendor reviewer and fails closed.
+
+        ``auto_merge=True`` promotes the green integration branch to
+        ``target_branch`` **only if the repo is in config ``merge.allowlist``**
+        (fail-closed money fence); a post-merge ``canary`` failure auto-reverts.
+        Non-allowlisted promotion is withheld and exiled to the report for
+        one-tap human approval. Returns the MergeResult dict."""
+        from . import merge as merge_mod
+        specs = _coerce_patch_specs(patches, self)
+        return merge_mod.orchestrate(
+            self, repo=str(Path(repo).expanduser()), patches=specs,
+            config=config.get(), target_branch=target_branch,
+            checks=checks, canary=canary, auto_merge=auto_merge,
+            max_repairs=max_repairs, repair_agent=repair_agent,
+            reviewer_agent=reviewer_agent).as_dict()
+
     def local(
         self,
         fn: Callable[..., Any],
@@ -412,6 +448,29 @@ class Workflow:
             return fn(self, inputs)
         finally:
             _CURRENT_PHASE.reset(token)
+
+
+def _coerce_patch_specs(patches: list, wf: "Workflow") -> list:
+    """Accept either wf.code receipts (with a worktree patch) or explicit merge
+    specs; normalize to {task_id, patch_path|patch_text, files}."""
+    run_dir = Path(wf._engine.run_dir)
+    specs = []
+    for i, p in enumerate(patches or []):
+        if not p:
+            continue
+        if "patch_text" in p or "patch_path" in p:
+            specs.append(p)
+            continue
+        patch = (p.get("patch") or {})  # a wf.code receipt
+        if not patch.get("changed"):
+            continue
+        rel = patch.get("patch")
+        specs.append({
+            "task_id": p.get("task_id") or p.get("label") or p.get("leaf_id", f"task{i}")[:16],
+            "patch_path": str(run_dir / rel) if rel else "",
+            "files": patch.get("files") or [],
+        })
+    return specs
 
 
 def _load_script(script_path: str):

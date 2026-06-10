@@ -215,12 +215,13 @@ class Engine:
 
         timeout = self.budget.leaf_deadline(req.timeout)
         wt_path = None
+        wt_base = ""
         orig_workspace = req.workspace
         if req.isolation == "worktree" and req.route.backend == "agent_cli":
             # Each isolated agent leaf runs in its own detached worktree; the
             # change set comes back as a patch artifact, never a live mutation.
             try:
-                wt_path = worktree_mod.prepare(
+                wt_path, wt_base = worktree_mod.prepare(
                     req.workspace, self.run_dir / "worktrees" / req.leaf_id[:16])
                 req.workspace = str(wt_path)
             except Exception as exc:
@@ -241,7 +242,8 @@ class Engine:
             res = _fail_result(req, f"executor: {exc}")
         if wt_path is not None:
             patch_file = self.run_dir / "artifacts" / f"{req.leaf_id[:16]}.patch"
-            evidence = worktree_mod.finalize(orig_workspace, wt_path, patch_file)
+            evidence = worktree_mod.finalize(orig_workspace, wt_path, patch_file,
+                                             base_sha=wt_base)
             if evidence.get("patch"):
                 evidence["patch"] = str(Path(evidence["patch"]).relative_to(self.run_dir))
                 res.artifact_refs = list(res.artifact_refs) + [evidence["patch"]]

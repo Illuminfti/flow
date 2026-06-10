@@ -1,5 +1,33 @@
 # Changelog
 
+## 4.0.0 — proof-gated merge orchestrator: from running work to shipping outcomes (2026-06-10)
+
+v1 DAG / v2 loop / v3 agentic-leaf APIs are unchanged and regression-locked. v4
+adds one new primitive — `wf.merge` — that takes the patch set produced by a
+fan-out of worktree-isolated coding agents and drives it to merged, proven code
+on a target branch. v3 ended with loose patches a human merged; v4 ends with
+merged + proven commits on the branch, zero-touch.
+
+- **`wf.merge(patches, *, repo, target_branch, checks, canary, auto_merge, max_repairs, repair_agent, reviewer_agent)` — integration orchestrator.** Accepts worktree-isolated `wf.code` receipts or explicit `{task_id, patch_path|patch_text, files}` specs. Applies each patch onto a fresh integration branch (`flow/integ-<run_id>`) using 3-way git apply, proof-gates with real test/build/lint commands, repairs on conflict or red via a bounded agent leaf, and commits each patch that passes. Returns a `MergeResult` dict: `{repo, target_branch, integration_branch, merged_to_target, target_sha_before, target_sha_after, reverted, merged:[ids], exiled:[ids], outcomes:[...], canary}`. Writes `merge-report.json` to the run dir.
+
+- **Proof-carrying gates (proof.py).** A patch exists only if its checks actually ran. `ProofReceipt` carries `{name, command, passed, exit_code, duration_s, output_tail, quarantined, timed_out, transcript_path}` — every proof is an attached artifact, not a claim. `run_check` and `run_check_quarantined` are the two entry points; `ProofBundle.green` (all non-quarantined receipts passed) is the merge precondition.
+
+- **Guard 1 — test-tamper review.** `touches_existing_tests()` flags a patch that modifies (not merely adds) existing test files. Such a patch cannot self-certify against the tests it weakened. It is routed to a cross-vendor reviewer agent leaf that evaluates the diff and must explicitly accept it; the merge fails closed if the reviewer is unavailable or rejects. New test files added by a patch are fine — they are coverage, not tamper.
+
+- **Guard 2 — flake quarantine.** `run_check_quarantined` re-runs a failing check once on a clean tree. A result that flips between runs (fail → pass) is marked `quarantined=True` — it is neither a pass nor a failure. One flaky check never randomly blocks nor randomly ships work. The quarantined names are reported in the outcome and merge-report.
+
+- **Guard 3 — auto-revert tripwire.** When `auto_merge=True`, the orchestrator records `target_sha_before`, promotes the integration branch to the target, then runs canary checks on the live target branch. A canary failure triggers `git reset --hard` back to `target_sha_before` and exiles every patch that had merged, with `reason="auto-reverted: post-merge canary failed"`. WAL event: `merge_reverted`.
+
+- **Money fence — allowlist-gated auto-merge.** Auto-merge to the target branch is allowed only when the repo path matches `config merge.allowlist` (fail-closed, like verifier identity). A non-allowlisted repo with `auto_merge=True` applies patches to the integration branch and emits `merge_promotion_withheld` — the green integration branch is held for one-tap human approval. An empty allowlist means auto-merge never fires.
+
+- **Repair loop.** Conflict and red outcomes both trigger a bounded agent leaf (`max_repairs` attempts, shared budget). A conflict repair (`_repair_conflict`) asks the agent to re-implement the patch's intent against the current tree. A red repair (`_repair_red`) gives the failing check output and asks the agent to fix the code without touching tests. Both run with `isolation="worktree"`. Repairs that produce no new diff are treated as exhausted.
+
+- **`merge:` config section.** `{allowlist: [], checks: [{name, command, timeout}], canary: []}`. `checks` is the per-patch proof gate; `canary` is the post-merge gate on the target. Both accept the same check shape as proof.py.
+
+- **WAL events.** `merge_started`, `merge_task_merged`, `merge_task_exiled`, `merge_task_blocked`, `merge_promotion_withheld`, `merge_reverted`, `merge_finished`. All written to the engine journal; inspectable via `flow trace`.
+
+- **Kill-condition harness + zero-touch ship rate metric.** `examples/v4_autonomous_backlog.py` is the canonical worked example: backlog → fan-out coders in worktrees → `wf.merge` with checks + canary + auto_merge → `zero_touch_ship_rate = shipped / total`. This is the v4 kill condition: a backlog goes in, merged+proven commits come out.
+
 ## 3.0.0 — agentic leaves: full coding agents as leaf work (2026-06-10)
 
 The v1 DAG API and v2 loop/block API are unchanged and regression-locked. v3
