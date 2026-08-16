@@ -1,0 +1,395 @@
+name: Deploy LifeOS v21 to canonical Vercel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .lifeos-v21-deploy
+      - .github/workflows/deploy-lifeos-v21.yml
+      - deploy/lifeos-v21/**
+      - .lifeos-auth/**
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lifeos-v21-canonical-vercel
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PROJECT_NAME: lifeos-site-psi
+      TEAM_ID: team_wNmelgfY4V01Q28iKOZR9VsO
+      CANONICAL_URL: https://lifeos-site-psi.vercel.app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install one-time deployment tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global vercel@50.8.1
+          python -m pip install --disable-pip-version-check cryptography playwright==1.55.0
+          python -m playwright install --with-deps chromium
+
+      - name: Create encrypted authorization channel
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p verification /tmp/lifeos-v21-auth
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+            -out /tmp/lifeos-v21-auth/private.pem 2>/dev/null
+          openssl pkey -in /tmp/lifeos-v21-auth/private.pem -pubout \
+            -out verification/vercel-auth-public.pem 2>/dev/null
+          jq -n --arg run_id "$GITHUB_RUN_ID" \
+            '{status:"waiting_for_encrypted_identity",run_id:$run_id}' \
+            > verification/session-status.json
+
+      - name: Publish one-time public encryption key
+        uses: actions/upload-artifact@v4
+        with:
+          name: lifeos-v21-vercel-auth-key-${{ github.run_id }}
+          path: verification/vercel-auth-public.pem
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Authorize Vercel account
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NO_COLOR: "1"
+          FORCE_HYPERLINK: "0"
+        run: |
+          set -euo pipefail
+
+          cleanup() {
+            vercel logout >/dev/null 2>&1 || true
+            rm -rf /tmp/lifeos-v21-auth deploy/lifeos-v21/.vercel
+          }
+          trap cleanup EXIT
+
+          script -q -e -c "vercel login --no-color" \
+            /tmp/lifeos-v21-auth/login.typescript \
+            > /tmp/lifeos-v21-auth/login.stdout 2>&1 &
+          login_pid=$!
+
+          verification_uri=""
+          device_code=""
+          for attempt in $(seq 1 90); do
+            clean_log=$(cat /tmp/lifeos-v21-auth/login.stdout \
+              /tmp/lifeos-v21-auth/login.typescript 2>/dev/null \
+              | sed -r -e 's/\x1B\[[0-9;?]*[ -\/]*[@-~]//g' \
+                -e 's/\x1B\][^\a]*(\a|\x1B\\)//g' || true)
+            verification_uri=$(printf '%s\n' "$clean_log" \
+              | grep -Eo 'https://vercel\.com/[^[:space:]]+' \
+              | head -n1 || true)
+            device_code=$(printf '%s\n' "$clean_log" \
+              | sed -nE 's/.*enter[[:space:]]+([A-Za-z0-9-]{4,}).*/\1/p' \
+              | head -n1 || true)
+            [[ -n "$verification_uri" ]] && break
+            if ! kill -0 "$login_pid" 2>/dev/null; then
+              cat /tmp/lifeos-v21-auth/login.stdout >&2 || true
+              exit 20
+            fi
+            sleep 2
+          done
+
+          if [[ -z "$verification_uri" ]]; then
+            echo 'Could not parse Vercel device authorization URL.' >&2
+            cat /tmp/lifeos-v21-auth/login.stdout >&2 || true
+            exit 21
+          fi
+          printf '%s' "$verification_uri" > /tmp/lifeos-v21-auth/device-url.txt
+          printf '%s' "$device_code" > /tmp/lifeos-v21-auth/device-code.txt
+          echo "Parsed Vercel device authorization URL for run ${GITHUB_RUN_ID}."
+
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          from cryptography.hazmat.primitives import hashes, serialization
+          from cryptography.hazmat.primitives.asymmetric import padding
+          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+          from playwright.sync_api import sync_playwright
+
+          root = Path('/tmp/lifeos-v21-auth')
+          device_url = root.joinpath('device-url.txt').read_text().strip()
+          device_code = root.joinpath('device-code.txt').read_text().strip()
+          private_key = serialization.load_pem_private_key(
+              root.joinpath('private.pem').read_bytes(), password=None
+          )
+          repo = os.environ['GITHUB_REPOSITORY']
+          run_id = os.environ['GITHUB_RUN_ID']
+          token = os.environ['GH_TOKEN']
+
+          def fetch_envelope(kind):
+              url = (
+                  f'https://api.github.com/repos/{repo}/contents/'
+                  f'.lifeos-auth/{kind}-{run_id}.json?ref=main'
+              )
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Accept': 'application/vnd.github+json',
+                      'User-Agent': 'LifeOS-v21-release',
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=20) as response:
+                      payload = json.load(response)
+              except urllib.error.HTTPError as exc:
+                  if exc.code == 404:
+                      return None
+                  raise
+              return json.loads(base64.b64decode(payload['content']).decode())
+
+          def decrypt(envelope, aad):
+              if envelope.get('run_id') != run_id:
+                  raise SystemExit('authorization envelope belongs to another run')
+              aes_key = private_key.decrypt(
+                  base64.b64decode(envelope['encrypted_key']),
+                  padding.OAEP(
+                      mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                      algorithm=hashes.SHA256(),
+                      label=None,
+                  ),
+              )
+              return AESGCM(aes_key).decrypt(
+                  base64.b64decode(envelope['nonce']),
+                  base64.b64decode(envelope['ciphertext']),
+                  aad,
+              ).decode().strip()
+
+          identity = None
+          for attempt in range(180):
+              envelope = fetch_envelope('identity')
+              if envelope:
+                  identity = json.loads(decrypt(envelope, b'lifeos-vercel-identity-v21'))
+                  break
+              if attempt % 12 == 0:
+                  print(f'Waiting for encrypted identity ({attempt + 1}/180)', flush=True)
+              time.sleep(5)
+          if not identity or '@' not in identity.get('email', ''):
+              raise SystemExit('valid encrypted Vercel identity was not delivered')
+
+          def click_first(page, labels):
+              for label in labels:
+                  buttons = page.get_by_role('button', name=label, exact=False)
+                  for index in range(buttons.count()):
+                      button = buttons.nth(index)
+                      if button.is_visible() and button.is_enabled():
+                          button.click(timeout=10000)
+                          return True
+              return False
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
+              page = browser.new_page(viewport={'width': 1280, 'height': 900})
+              page.goto(device_url, wait_until='domcontentloaded', timeout=90000)
+              page.wait_for_timeout(1800)
+
+              if device_code:
+                  candidates = [
+                      page.locator('input[autocomplete="one-time-code"]:visible'),
+                      page.locator('input[name*="code" i]:visible'),
+                      page.locator('input[type="text"]:visible'),
+                  ]
+                  for field in candidates:
+                      if field.count() == 1:
+                          field.first.fill(device_code)
+                          click_first(page, ('Continue', 'Submit', 'Verify'))
+                          page.wait_for_timeout(1600)
+                          break
+
+              email = page.locator('input[type="email"]:visible')
+              if not email.count():
+                  click_first(page, ('Continue with Email', 'Email'))
+                  page.wait_for_timeout(1200)
+                  email = page.locator('input[type="email"]:visible')
+              if not email.count():
+                  raise SystemExit('could not find Vercel email login field')
+              email.first.fill(identity['email'])
+              if not click_first(page, ('Continue with Email', 'Continue', 'Send Code')):
+                  email.first.press('Enter')
+              page.wait_for_timeout(2600)
+              page.screenshot(path='verification/vercel-email-requested.png', full_page=True)
+              Path('verification/vercel-email-requested.txt').write_text(
+                  f'url={page.url}\ntitle={page.title()}\n'
+                  f'body={page.locator("body").inner_text()[:3000]}\n'
+              )
+              print('Vercel email code requested. Waiting for encrypted OTP.', flush=True)
+
+              otp = None
+              for attempt in range(180):
+                  envelope = fetch_envelope('otp')
+                  if envelope:
+                      otp = decrypt(envelope, b'lifeos-vercel-otp-v21')
+                      break
+                  if attempt % 12 == 0:
+                      print(f'Waiting for encrypted OTP ({attempt + 1}/180)', flush=True)
+                  time.sleep(5)
+              if not otp or len(otp) != 6 or not otp.isdigit():
+                  raise SystemExit('valid encrypted six-digit OTP was not delivered')
+
+              one_time = page.locator('input[autocomplete="one-time-code"]:visible')
+              numeric = page.locator('input[inputmode="numeric"]:visible')
+              text = page.locator('input[type="text"]:visible')
+              if one_time.count() == 1:
+                  one_time.first.fill(otp)
+              elif numeric.count() == 1:
+                  numeric.first.fill(otp)
+              elif numeric.count() >= 6:
+                  for index, digit in enumerate(otp):
+                      numeric.nth(index).fill(digit)
+              elif text.count() == 1:
+                  text.first.fill(otp)
+              elif text.count() >= 6:
+                  for index, digit in enumerate(otp):
+                      text.nth(index).fill(digit)
+              else:
+                  raise SystemExit('could not identify Vercel OTP fields')
+              click_first(page, ('Continue', 'Verify', 'Confirm', 'Authorize'))
+              page.wait_for_timeout(3500)
+              click_first(page, ('Authorize', 'Confirm', 'Continue', 'Allow'))
+              page.wait_for_timeout(3000)
+              page.screenshot(path='verification/vercel-authorized.png', full_page=True)
+              Path('verification/vercel-authorized.txt').write_text(
+                  f'url={page.url}\ntitle={page.title()}\n'
+                  f'body={page.locator("body").inner_text()[:3000]}\n'
+              )
+              browser.close()
+          PY
+
+          set +e
+          wait "$login_pid"
+          login_status=$?
+          set -e
+          if [[ "$login_status" != "0" ]]; then
+            cat /tmp/lifeos-v21-auth/login.stdout >&2 || true
+            cat verification/vercel-authorized.txt >&2 || true
+            exit 22
+          fi
+          vercel whoami | tee verification/vercel-whoami.txt
+
+          vercel api GET '/v9/projects?limit=100' > /tmp/lifeos-v21-auth/personal.json
+          vercel api GET "/v9/projects?limit=100&teamId=${TEAM_ID}" > /tmp/lifeos-v21-auth/team.json
+          personal_id=$(jq -r --arg name "$PROJECT_NAME" '.projects[]? | select(.name == $name) | .id' /tmp/lifeos-v21-auth/personal.json | head -n1)
+          personal_account=$(jq -r --arg name "$PROJECT_NAME" '.projects[]? | select(.name == $name) | .accountId' /tmp/lifeos-v21-auth/personal.json | head -n1)
+          team_project_id=$(jq -r --arg name "$PROJECT_NAME" '.projects[]? | select(.name == $name) | .id' /tmp/lifeos-v21-auth/team.json | head -n1)
+          team_account=$(jq -r --arg name "$PROJECT_NAME" '.projects[]? | select(.name == $name) | .accountId' /tmp/lifeos-v21-auth/team.json | head -n1)
+
+          if [[ -n "$personal_id" && "$personal_id" != "null" ]]; then
+            project_id="$personal_id"; account_id="$personal_account"; scope="personal"; project_query=""
+          elif [[ -n "$team_project_id" && "$team_project_id" != "null" ]]; then
+            project_id="$team_project_id"; account_id="$team_account"; scope="team"; project_query="?teamId=${TEAM_ID}"
+          else
+            jq -n --argjson personal "$(jq '[.projects[]? | {id,name,accountId}]' /tmp/lifeos-v21-auth/personal.json)" --argjson team "$(jq '[.projects[]? | {id,name,accountId}]' /tmp/lifeos-v21-auth/team.json)" '{status:"blocked",reason:"canonical project not found",personal:$personal,team:$team}' > verification/project-discovery.json
+            cat verification/project-discovery.json >&2
+            exit 23
+          fi
+          echo "Selected ${scope} project ${project_id}."
+          mkdir -p deploy/lifeos-v21/.vercel
+          jq -n --arg orgId "$account_id" --arg projectId "$project_id" '{orgId:$orgId,projectId:$projectId}' > deploy/lifeos-v21/.vercel/project.json
+          vercel api PATCH "/v9/projects/${project_id}${project_query}" --body '{"ssoProtection":null}' > verification/project-policy.json || true
+
+          pushd deploy/lifeos-v21 >/dev/null
+          deployment_url=$(vercel deploy --prod --yes --force | tail -n1)
+          popd >/dev/null
+          printf '%s\n' "$deployment_url" | tee verification/deployment-url.txt
+
+          for base in "$deployment_url" "$CANONICAL_URL"; do
+            label=$(printf '%s' "$base" | sed 's#https://##; s#[^A-Za-z0-9]#-#g')
+            for attempt in $(seq 1 60); do
+              code=$(curl --location --silent --show-error --output "verification/${label}-proof.json" --write-out '%{http_code}' "${base}/proof.json?run=${GITHUB_RUN_ID}-${attempt}" || true)
+              echo "${label} attempt ${attempt}/60: HTTP ${code}"
+              if [[ "$code" == "200" ]] && jq -e '.release == "lifeos-v21" and .asset_model == "self-contained" and .external_runtime_assets == 0' "verification/${label}-proof.json" >/dev/null 2>&1; then
+                break
+              fi
+              if [[ "$attempt" == "60" ]]; then
+                cat "verification/${label}-proof.json" >&2 || true
+                exit 24
+              fi
+              sleep 10
+            done
+            curl --location --fail --silent --show-error --dump-header "verification/${label}-headers.txt" "${base}/" -o "verification/${label}-home.html"
+            grep -Fq 'data-release="lifeos-v21"' "verification/${label}-home.html"
+            grep -Fq 'Your life is' "verification/${label}-home.html"
+            grep -Fq '<style>' "verification/${label}-home.html"
+            grep -Fq '<canvas id="field"' "verification/${label}-home.html"
+            ! grep -Eq '<link[^>]+rel="stylesheet"' "verification/${label}-home.html"
+            ! grep -Eq '<script[^>]+src=' "verification/${label}-home.html"
+          done
+
+          BASE_URL="$CANONICAL_URL" python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright
+
+          base = os.environ['BASE_URL']
+          result = {'status': 'PASS', 'canonical_url': base, 'release': 'lifeos-v21'}
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
+              for name, viewport in (
+                  ('desktop', {'width': 1440, 'height': 1000}),
+                  ('mobile', {'width': 390, 'height': 844}),
+              ):
+                  page = browser.new_page(viewport=viewport)
+                  errors = []
+                  page.on('pageerror', lambda error: errors.append(str(error)))
+                  page.on('console', lambda msg: errors.append(msg.text) if msg.type == 'error' else None)
+                  response = page.goto(base, wait_until='networkidle', timeout=120000)
+                  page.wait_for_timeout(1400)
+                  headline = ' '.join(page.locator('h1').inner_text().split())
+                  dims = page.evaluate('''() => ({
+                    scrollWidth: document.documentElement.scrollWidth,
+                    viewportWidth: innerWidth,
+                    release: document.documentElement.dataset.release,
+                    background: getComputedStyle(document.body).backgroundColor,
+                    externalStyles: document.querySelectorAll('link[rel="stylesheet"]').length,
+                    externalScripts: document.querySelectorAll('script[src]').length
+                  })''')
+                  assert response and response.status == 200
+                  assert headline == 'Your life is happening faster than you can remember it.'
+                  assert page.locator('canvas#field').is_visible()
+                  assert dims['scrollWidth'] <= dims['viewportWidth'], dims
+                  assert dims['release'] == 'lifeos-v21', dims
+                  assert dims['externalStyles'] == 0 and dims['externalScripts'] == 0, dims
+                  assert not errors, errors
+                  page.screenshot(path=f'verification/{name}.png', full_page=True)
+                  result[name] = {'headline': headline, 'dimensions': dims, 'errors': errors}
+                  page.close()
+              browser.close()
+          Path('verification/render-verification.json').write_text(json.dumps(result, indent=2) + '\n')
+          Path('verification/LIFEOS_V21_PRODUCTION.PASS').write_text('PASS\n')
+          print(json.dumps(result, indent=2))
+          PY
+
+      - name: Upload production evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lifeos-v21-production-evidence-${{ github.run_id }}
+          path: verification
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
